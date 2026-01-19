@@ -14,9 +14,22 @@ datasource db {
   provider = "postgresql"
 }
 
+enum ROLE {
+  ADMIN
+  STAFF
+  CUSTOMER
+}
+
 model User {
   id String @id @default(uuid())
   email String @unique
   password String 
   name String
+  avatar String
+  phone String?
+  role ROLE
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+  @@map("users")
+
 }

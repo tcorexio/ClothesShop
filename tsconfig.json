@@ -23,7 +23,10 @@
     "noFallthroughCasesInSwitch": false,
     "paths": {
       "@modules/*":["src/modules/*"],
+      "@controllers/*" :["src/controllers/*"],
+      "@services/*" :["src/services/*"],
       "@common/*":["src/common/*"],
+
     }
   }
 }
