@@ -14,10 +14,11 @@ export class MailService {
   async sendResetPasswordMail(email: string, token: string) {
     // const resetLink = `http://localhost:3000/reset-password?token=${token}`;
 
-    await this.transporter.sendMail({
-      to: email,
-      subject: 'Yêu cầu đặt lại mật khẩu',
-      html: `
+    try {
+      await this.transporter.sendMail({
+        to: email,
+        subject: 'Yêu cầu đặt lại mật khẩu',
+        html: `
   <div style="
     max-width: 600px;
     margin: auto;
@@ -70,6 +71,10 @@ export class MailService {
     </p>
   </div>
   `,
-    });
+      });
+    } catch (error) {
+      console.error('Send mail error:', error);
+      throw new Error('Không thể gửi email khôi phục mật khẩu');
+    }
   }
 }
