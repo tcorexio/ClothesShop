@@ -1,35 +1,293 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+// =====================
+// PRISMA CONFIGURATION
+// =====================
 
 generator client {
-  provider = "prisma-client"
-  output   = "../generated/prisma"
-  moduleFormat = "cjs"
+  provider = "prisma-client-js"
 }
 
 datasource db {
   provider = "postgresql"
+  url      = env("DATABASE_URL")
 }
 
-enum ROLE {
-  ADMIN
-  STAFF
+// =====================
+// ENUMS
+// =====================
+
+enum Role {
   CUSTOMER
+  ADMIN
 }
+
+enum OrderStatus {
+  PENDING
+  PROCESSED
+  SHIPPED
+  DELIVERED
+  CANCELLED
+}
+
+enum PaymentMethod {
+  COD
+  BANK_TRANSFER
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  FAILED
+  REFUNDED
+}
+
+// =====================
+// USER & AUTH
+// =====================
 
 model User {
-  id String @id @default(uuid())
-  email String @unique
-  password String 
-  name String
-  avatar String
-  phone String?
-  role ROLE
-  created_at DateTime @default(now())
-  updated_at DateTime @updatedAt
-  @@map("users")
+  id       Int     @id @default(autoincrement())
+  email    String  @unique
+  password String
+  name     String?
+  phone    String?
+  role     Role    @default(CUSTOMER)
 
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime? @updatedAt @map("updated_at")
+
+  // Relations
+  addresses     Address[]
+  refreshTokens RefreshToken[]
+  cart          Cart?
+  orders        Order[]
+  reviews       Review[]
+
+  @@map("users")
+}
+
+model Address {
+  id       Int     @id @default(autoincrement())
+  street   String?
+  city     String?
+  district String?
+  phone    String?
+
+  userId Int @map("user_id")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime? @updatedAt @map("updated_at")
+
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("addresses")
+}
+
+model RefreshToken {
+  id        Int      @id @default(autoincrement())
+  token     String   @unique
+  userId    Int      @map("user_id")
+  expiresAt DateTime @map("expires_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("refresh_tokens")
+}
+
+// =====================
+// PRODUCT CATALOG
+// =====================
+
+model Category {
+  id    Int    @id @default(autoincrement())
+  title String
+
+  // Relations
+  products Product[]
+
+  @@map("categories")
+}
+
+model Product {
+  id          Int     @id @default(autoincrement())
+  name        String
+  description String? @db.Text
+  price       Decimal @db.Decimal(10, 2)
+  isActive    Boolean @default(true) @map("is_active")
+
+  categoryId Int @map("category_id")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime? @updatedAt @map("updated_at")
+
+  // Relations
+  category Category         @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  variants ProductVariant[]
+  reviews  Review[]
+
+  @@map("products")
+}
+
+model ProductVariant {
+  id        Int     @id @default(autoincrement())
+  productId Int     @map("product_id")
+  size      String
+  color     String
+  stock     Int     @default(0)
+  imageUrl  String? @map("image_url") // Each variant (color) has its own image
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime? @updatedAt @map("updated_at")
+
+  // Relations
+  product    Product     @relation(fields: [productId], references: [id], onDelete: Cascade)
+  cartItems  CartItem[]
+  orderItems OrderItem[]
+
+  @@unique([productId, size, color])
+  @@map("product_variants")
+}
+
+// =====================
+// SHOPPING CART
+// =====================
+
+model Cart {
+  id     Int @id @default(autoincrement())
+  userId Int @unique @map("user_id")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime? @updatedAt @map("updated_at")
+
+  // Relations
+  user  User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  items CartItem[]
+
+  @@map("carts")
+}
+
+model CartItem {
+  id        Int @id @default(autoincrement())
+  cartId    Int @map("cart_id")
+  variantId Int @map("variant_id")
+  quantity  Int
+
+  // Relations
+  cart    Cart           @relation(fields: [cartId], references: [id], onDelete: Cascade)
+  variant ProductVariant @relation(fields: [variantId], references: [id], onDelete: Restrict)
+
+  @@unique([cartId, variantId])
+  @@map("cart_items")
+}
+
+// =====================
+// ORDERS
+// =====================
+
+model Order {
+  id             Int         @id @default(autoincrement())
+  userId         Int         @map("user_id")
+  orderAddressId Int         @map("order_address_id")
+  totalPrice     Decimal     @db.Decimal(10, 2) @map("total_price")
+  status         OrderStatus @default(PENDING)
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime? @updatedAt @map("updated_at")
+
+  // Relations
+  user         User         @relation(fields: [userId], references: [id], onDelete: Restrict)
+  orderAddress OrderAddress @relation(fields: [orderAddressId], references: [id], onDelete: Restrict)
+  items        OrderItem[]
+  payment      Payment?
+
+  @@map("orders")
+}
+
+// =====================
+// ORDER ADDRESS SNAPSHOT
+// =====================
+
+model OrderAddress {
+  id       Int     @id @default(autoincrement())
+  fullName String? @map("full_name")
+  phone    String?
+  street   String?
+  district String?
+  city     String?
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  // Relations
+  orders Order[]
+
+  @@map("order_addresses")
+}
+
+// =====================
+// ORDER ITEMS
+// =====================
+
+model OrderItem {
+  id        Int     @id @default(autoincrement())
+  orderId   Int     @map("order_id")
+  variantId Int?    @map("variant_id") // Nullable to avoid FK error when variant is deleted
+  quantity  Int
+  
+  // Snapshot data at time of order - preserves historical accuracy
+  productName     String  @map("product_name")
+  variantSize     String  @map("variant_size")
+  variantColor    String  @map("variant_color")
+  price           Decimal @db.Decimal(10, 2)
+  variantImageUrl String? @map("variant_image_url") // Snapshot from ProductVariant.imageUrl
+
+  // Relations
+  order   Order           @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  variant ProductVariant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
+
+  @@map("order_items")
+}
+
+// =====================
+// REVIEWS
+// =====================
+
+model Review {
+  id        Int      @id @default(autoincrement())
+  userId    Int      @map("user_id")
+  productId Int      @map("product_id")
+  rating    Int      // 1-5 stars
+  comment   String?  @db.Text
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  // Relations
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, productId])
+  @@map("reviews")
+}
+
+// =====================
+// PAYMENTS
+// =====================
+
+model Payment {
+  id            Int           @id @default(autoincrement())
+  orderId       Int           @unique @map("order_id")
+  method        PaymentMethod
+  status        PaymentStatus @default(PENDING)
+  amount        Decimal       @db.Decimal(10, 2)
+  transactionId String?       @map("transaction_id")
+  paidAt        DateTime?     @map("paid_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  // Relations
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@map("payments")
 }
