@@ -22,12 +22,12 @@ enum ROLE {
 
 model User {
   id               String   @id @default(uuid())
+  username         String   @unique
   email            String   @unique
   password         String
-  name             String
   avatar           String
   phone            String?
-  role             ROLE
+  role             ROLE @default(CUSTOMER)
 
   resetToken       String?
   resetTokenExpire DateTime?

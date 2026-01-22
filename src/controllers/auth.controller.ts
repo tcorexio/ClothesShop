@@ -1,5 +1,13 @@
-import { Body, Controller, Headers, Inject, Post } from '@nestjs/common';
-
+import {
+  Body,
+  Controller,
+  Inject,
+  Post,
+  Req,
+  Res,
+  UnauthorizedException,
+} from '@nestjs/common';
+import type { Request, Response } from 'express';
 import { LoginDto } from '@dto/auth/login.dto';
 import { SignUpDto } from '@dto/auth/signup.dto';
 import { ForgotPasswordDto } from '@dto/auth/forgot-password.dto';
@@ -20,13 +28,33 @@ export class AuthController {
   }
 
   @Post('login')
-  login(@Body() dto: LoginDto) {
-    return this.authService.login(dto);
+  async login(
+    @Body() dto: LoginDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const result = await this.authService.login(dto);
+
+    res.cookie('refreshToken', result.refreshToken, {
+      httpOnly: true,
+      secure: true, // true nếu HTTPS
+      sameSite: 'strict',
+      path: '/auth/refresh-token',
+    });
+
+    return {
+      accessToken: result.accessToken,
+      user: result.user,
+    };
   }
 
   @Post('refresh-token')
-  refreshToken(@Headers('authorization') authorization: string) {
-    const token = authorization?.replace('Bearer ', '');
+  refreshToken(@Req() req: Request) {
+    const token = req.cookies?.refreshToken;
+
+    if (!token) {
+      throw new UnauthorizedException('Refresh token not found');
+    }
+
     return this.authService.refreshToken(token);
   }
 

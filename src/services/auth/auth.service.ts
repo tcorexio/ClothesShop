@@ -22,7 +22,9 @@ import {
   UserModel,
 } from '@models/auth/auth.model';
 import { PrismaService } from '@services/prisma/prisma.service';
-import { MailService } from '@services/email/mail.service';
+import { MailService } from '@services/mail/mail.service';
+import { ROLE } from 'generated/prisma/enums';
+import { User } from 'generated/prisma/client';
 
 @Injectable()
 export class AuthService implements IAuthService {
@@ -33,11 +35,11 @@ export class AuthService implements IAuthService {
   ) {}
 
   /* ===================== PRIVATE MAPPER ===================== */
-  private toUserModel(user: any): UserModel {
+  private toUserModel(user: User): UserModel {
     return {
       id: user.id,
       email: user.email,
-      name: user.name,
+      username: user.username,
       avatar: user.avatar,
       phone: user.phone,
       role: user.role,
@@ -46,23 +48,25 @@ export class AuthService implements IAuthService {
 
   /* ===================== SIGN UP ===================== */
   async signup(dto: SignUpDto): Promise<SignUpModel> {
-    const existedUser = await this.prisma.user.findUnique({
-      where: { email: dto.email },
+    const existedUser = await this.prisma.user.findFirst({
+      where: {
+        OR: [{ email: dto.email }, { username: dto.username }],
+      },
     });
 
     if (existedUser) {
-      throw new BadRequestException('Email đã tồn tại');
+      throw new BadRequestException('Username hoặc email đã tồn tại');
     }
 
     const hashedPassword = await bcrypt.hash(dto.password, 10);
 
     const user = await this.prisma.user.create({
       data: {
+        username: dto.username,
         email: dto.email,
         password: hashedPassword,
-        name: dto.username,
         avatar: '',
-        role: 'CUSTOMER',
+        role: ROLE.CUSTOMER,
       },
     });
 
@@ -75,11 +79,11 @@ export class AuthService implements IAuthService {
   /* ===================== LOGIN ===================== */
   async login(dto: LoginDto): Promise<LoginModel> {
     const user = await this.prisma.user.findUnique({
-      where: { email: dto.username },
+      where: { username: dto.username },
     });
 
     if (!user) {
-      throw new UnauthorizedException('Sai email hoặc mật khẩu');
+      throw new UnauthorizedException('Sai username hoặc mật khẩu');
     }
 
     const isValidPassword = await bcrypt.compare(dto.password, user.password);
