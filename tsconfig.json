@@ -26,6 +26,9 @@
       "@controllers/*" :["src/controllers/*"],
       "@services/*" :["src/services/*"],
       "@common/*":["src/common/*"],
+      "@models/*":["src/lib/models/*"],
+      "@dto/*":["src/lib/dto/*"],
+
 
     }
   }
