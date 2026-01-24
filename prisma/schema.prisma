@@ -3,21 +3,23 @@
 // =====================
 
 generator client {
-  provider = "prisma-client-js"
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+  moduleFormat = "cjs"
 }
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
 }
 
 // =====================
 // ENUMS
 // =====================
 
-enum Role {
-  CUSTOMER
+enum ROLE {
   ADMIN
+  STAFF
+  CUSTOMER
 }
 
 enum OrderStatus {
@@ -45,18 +47,25 @@ enum PaymentStatus {
 // =====================
 
 model User {
-  id       Int     @id @default(autoincrement())
-  email    String  @unique
-  password String
-  name     String?
-  phone    String?
-  role     Role    @default(CUSTOMER)
+  id        Int     @id @default(autoincrement())
+  username  String  @unique
+  email     String  @unique
+  password  String
+  name      String?
+  avatar    String?
+  phone     String?
+  role      ROLE    @default(CUSTOMER)
 
+  // Auth
+  resetToken       String?
+  resetTokenExpire DateTime?
+  isDeleted        Boolean @default(false)
+
+  // Timestamps
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime? @updatedAt @map("updated_at")
-  isDeleted Boolean @default(false)
 
-  // Relations
+  // Relations (giữ theo main)
   addresses     Address[]
   refreshTokens RefreshToken[]
   cart          Cart?

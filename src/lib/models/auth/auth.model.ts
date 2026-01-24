@@ -1,10 +1,10 @@
 import { ROLE } from 'generated/prisma/enums';
 
 export interface UserModel {
-  id: string;
+  id: number;
   email: string;
   username: string;
-  avatar: string;
+  avatar?: string | null;
   phone?: string | null;
   role: ROLE;
 }
