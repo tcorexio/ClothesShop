@@ -15,12 +15,12 @@ import { Prisma } from 'generated/prisma/client';
 @Injectable()
 export class AdressService implements IAddressService {
   constructor(private readonly prismaService: PrismaService) {}
-  async Add(data: CreateAddressDto): Promise<AddressModel> {
+  async Add(userId: number, data: CreateAddressDto): Promise<AddressModel> {
     try {
       const address = await this.prismaService.address.create({
         data: {
           ...data,
-          userId: 1000,
+          userId,
         },
 
         select: {
@@ -100,46 +100,41 @@ export class AdressService implements IAddressService {
     }
   }
 
-  async Update(id: number, data: UpdateAddressDto): Promise<AddressModel> {
-    try {
-      return await this.prismaService.address.update({
-        where: { id },
-        data,
-        select: {
-          id: true,
-          street: true,
-          city: true,
-          ward: true,
-          phone: true,
-          userId: true,
-          createdAt: true,
-          updatedAt: true,
-        },
-      });
-    } catch (error) {
-      throw new InternalServerErrorException('Something went wrong');
+  async Update(addressId: number, userId: number, data: UpdateAddressDto) {
+    const address = await this.prismaService.address.findFirst({
+      where: {
+        id: addressId,
+        userId,
+      },
+    });
+
+    if (!address) {
+      throw new NotFoundException('Address không tồn tại');
     }
+
+    return this.prismaService.address.update({
+      where: { id: addressId },
+      data,
+    });
   }
 
-  async Delete(id: number): Promise<boolean> {
-    try {
-      await this.prismaService.address.delete({
-        where: {
-          id,
-        },
-      });
+  async Delete(addressId: number, userId: number): Promise<boolean> {
+    const address = await this.prismaService.address.findFirst({
+      where: {
+        id: addressId,
+        userId,
+      },
+    });
 
-      return true;
-    } catch (error) {
-      if (
-        error instanceof Prisma.PrismaClientKnownRequestError &&
-        error.code === 'P2025'
-      ) {
-        throw new NotFoundException('Address not found');
-      }
-
-      throw new InternalServerErrorException('Something went wrong');
+    if (!address) {
+      throw new NotFoundException('Address không tồn tại');
     }
+
+    await this.prismaService.address.delete({
+      where: { id: addressId },
+    });
+
+    return true;
   }
 
   async ExistsByIdAndUser(id: number, userId: number): Promise<boolean> {

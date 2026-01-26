@@ -20,31 +20,21 @@ export class UserService implements IUserService {
   constructor(private readonly prismaService: PrismaService) {}
 
   async ExistsByEmailAsync(email: string): Promise<boolean> {
-    try {
-      const user = await this.prismaService.user.findFirst({
-        where: { email },
-      });
+    const user = await this.prismaService.user.findFirst({
+      where: { email },
+      select: { id: true },
+    });
 
-      if (user) return true;
-
-      return false;
-    } catch (error) {
-      throw new Error('Method not implemented.');
-    }
+    return !!user;
   }
 
   async ExistByUserNameAsync(username: string): Promise<boolean> {
-    try {
-      const user = await this.prismaService.user.findFirst({
-        where: { username },
-      });
+    const user = await this.prismaService.user.findFirst({
+      where: { username },
+      select: { id: true },
+    });
 
-      if (user) return true;
-
-      return false;
-    } catch (error) {
-      throw new Error('Method not implemented.');
-    }
+    return !!user;
   }
 
   async Add(data: CreateUserDto): Promise<UserModel> {
@@ -56,112 +46,127 @@ export class UserService implements IUserService {
     const userExistingByUsername = await this.ExistByUserNameAsync(
       data.username,
     );
-
     if (userExistingByUsername) {
       throw new BadRequestException('Username đã tồn tại trong hệ thống');
     }
 
-    try {
-      const hashedPassword = await bcrypt.hash(data.password, 10);
+    const hashedPassword = await bcrypt.hash(data.password, 10);
 
-      const user = await this.prismaService.user.create({
-        data: {
-          username: data.username,
-          email: data.email,
-          password: hashedPassword,
-          avatar: '',
-          role: Role.CUSTOMER,
-        },
-        select: {
-          id: true,
-          email: true,
-          username: true,
-          name: true,
-          avatar: true,
-          phone: true,
-          role: true,
-        },
-      });
+    const user = await this.prismaService.user.create({
+      data: {
+        username: data.username,
+        email: data.email,
+        password: hashedPassword,
+        avatar: data.avatar,
+        role: data.role,
+      },
+      select: {
+        id: true,
+        email: true,
+        username: true,
+        name: true,
+        avatar: true,
+        phone: true,
+        role: true,
+      },
+    });
 
-      return user;
-    } catch (error) {
-      throw new InternalServerErrorException('Something went wrong');
-    }
+    return user;
   }
 
   async Update(userId: number, data: UpdateUserDto): Promise<UserModel> {
-    try {
-      const user = await this.prismaService.user.update({
-        where: {
-          id: userId,
-        },
-        data,
-        select: {
-          id: true,
-          email: true,
-          username: true,
-          name: true,
-          avatar: true,
-          phone: true,
-          role: true,
-        },
-      });
+    const userExist = await this.prismaService.user.findUnique({
+      where: { id: userId },
+    });
 
-      return user;
-    } catch (error) {
-      throw new InternalServerErrorException('Something went wrong');
+    if (!userExist) {
+      throw new NotFoundException('User không tồn tại');
     }
+
+    if (userExist.isDeleted) {
+      throw new BadRequestException('User đã bị xóa');
+    }
+
+    const user = await this.prismaService.user.update({
+      where: { id: userId },
+      data,
+      select: {
+        id: true,
+        email: true,
+        username: true,
+        name: true,
+        avatar: true,
+        phone: true,
+        role: true,
+      },
+    });
+
+    return user;
   }
 
   async GetUserByUserId(userId: number): Promise<UserModel> {
-    try {
-      const user = await this.prismaService.user.findFirst({
-        where: { id: userId },
-        select: {
-          id: true,
-          email: true,
-          username: true,
-          name: true,
-          avatar: true,
-          phone: true,
-          role: true,
-        },
-      });
+    const user = await this.prismaService.user.findFirst({
+      where: { id: userId, isDeleted: false },
+      select: {
+        id: true,
+        email: true,
+        username: true,
+        name: true,
+        avatar: true,
+        phone: true,
+        role: true,
+      },
+    });
 
-      if (!user) {
-        throw new NotFoundException('User not found');
-      }
-
-      return user;
-    } catch (error) {
-      throw new InternalServerErrorException('Something went wrong');
+    if (!user) {
+      throw new NotFoundException('User not found');
     }
+
+    return user;
   }
 
   async GetUserByEmail(email: string): Promise<UserModel> {
-    try {
-      const user = await this.prismaService.user.findFirst({
-        where: { email },
-        select: {
-          id: true,
-          email: true,
-          username: true,
-          name: true,
-          avatar: true,
-          phone: true,
-          role: true,
-        },
-      });
+    const user = await this.prismaService.user.findFirst({
+      where: { email, isDeleted: false },
+      select: {
+        id: true,
+        email: true,
+        username: true,
+        name: true,
+        avatar: true,
+        phone: true,
+        role: true,
+      },
+    });
 
-      if (!user) {
-        throw new NotFoundException('User not found');
-      }
-
-      return user;
-    } catch (error) {
-      throw new InternalServerErrorException('Something went wrong');
+    if (!user) {
+      throw new NotFoundException('User not found');
     }
+
+    return user;
   }
+
+  async GetUserByUserName(username: string): Promise<UserModel> {
+    const user = await this.prismaService.user.findFirst({
+      where: { username, isDeleted: false },
+      select: {
+        id: true,
+        email: true,
+        username: true,
+        name: true,
+        avatar: true,
+        phone: true,
+        role: true,
+      },
+    });
+
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    return user;
+  }
+
   async GetAllPage(dto: UserFilterDto): Promise<PageResponseModel<UserModel>> {
     const {
       page = 1,
@@ -174,47 +179,56 @@ export class UserService implements IUserService {
       phone,
       role,
     } = dto;
-    try {
-      const where: Prisma.UserWhereInput = {
-        ...(email && { email }),
-        ...(username && { username }),
-        ...(name && { name }),
-        ...(phone && { phone }),
-        ...(role && { role }),
-        isDeleted: false,
-      };
 
-      const [data, totalItems] = await this.prismaService.$transaction([
-        this.prismaService.user.findMany({
-          where,
-          skip: (page - 1) * limit,
-          take: limit,
-          orderBy: sortBy
-            ? {
-                [sortBy]: sortOrder.toLocaleLowerCase() as 'asc' | 'desc',
-              }
-            : undefined,
-        }),
-        this.prismaService.user.count({ where }),
-      ]);
+    const where: Prisma.UserWhereInput = {
+      ...(email && { email }),
+      ...(username && { username }),
+      ...(name && { name }),
+      ...(phone && { phone }),
+      ...(role && { role }),
+      isDeleted: false,
+    };
 
-      return {
-        content: data,
-        totalItems,
-        totalPages: Math.ceil(totalItems / limit),
-        pageSize: limit,
-        pageNumber: page,
-      };
-    } catch (error) {}
-    throw new InternalServerErrorException('Something went wrong');
+    const [data, totalItems] = await this.prismaService.$transaction([
+      this.prismaService.user.findMany({
+        where,
+        skip: (page - 1) * limit,
+        take: limit,
+        orderBy: sortBy
+          ? {
+              [sortBy]: sortOrder.toLocaleLowerCase() as 'asc' | 'desc',
+            }
+          : undefined,
+        select: {
+          id: true,
+          email: true,
+          username: true,
+          name: true,
+          avatar: true,
+          phone: true,
+          role: true,
+        },
+      }),
+      this.prismaService.user.count({ where }),
+    ]);
+
+    return {
+      content: data,
+      totalItems,
+      totalPages: Math.ceil(totalItems / limit),
+      pageSize: limit,
+      pageNumber: page,
+    };
   }
 
   async SoftDeleteAsync(userId: number): Promise<boolean> {
-    const user = await this.prismaService.user.findFirst({
+    const user = await this.prismaService.user.update({
       where: { id: userId },
+      data: {
+        isDeleted: true,
+      },
     });
 
-    if (!user) return false;
-    return true;
+    return !!user;
   }
 }

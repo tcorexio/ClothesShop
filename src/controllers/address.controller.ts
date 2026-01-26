@@ -10,14 +10,16 @@ import {
   Put,
   Query,
   Req,
+  UseGuards,
 } from '@nestjs/common';
-import { ADDRESS_SERVICE } from '@common/constant/service.interface.constant';
 import type { IAddressService } from '@services/adress/address.serivce.interface';
+import type { Request } from 'express';
+import { ADDRESS_SERVICE } from '@common/constant/service.interface.constant';
 import { CreateAddressDto } from '@dto/address/create-address.dto';
 import { UpdateAddressDto } from '@dto/address/update-address.dto';
-import { AddressModel } from '@models/address/address.model';
-import type { Request } from 'express';
 import { PageFilterDto } from '@dto/page/page-filter.dto';
+import { JwtAuthGuard } from 'src/guards/jwt-auth.guard';
+import { AuthUser } from '@dto/auth/auth-user.interface';
 
 @Controller('addresses')
 export class AddressController {
@@ -27,16 +29,21 @@ export class AddressController {
   ) {}
 
   @Post()
-  add(@Body() data: CreateAddressDto, @Req() req: Request) {
-    return this.addressService.Add(data);
+  add(
+    @Body() data: CreateAddressDto,
+    @Req() req: Request & { user: AuthUser },
+  ) {
+    return this.addressService.Add(req.user.id, data);
   }
 
-  @Get('user/:userId')
-  getByUserId(
-    @Param('userId', ParseIntPipe) userId: number,
+  @Get('me')
+  getMyAddresses(
+    @Req() req: Request & { user: AuthUser },
     @Query() pageFilter: PageFilterDto,
   ) {
-    return this.addressService.GetByUserId(userId, pageFilter);
+    const user = req.user as { id: number };
+
+    return this.addressService.GetByUserId(user.id, pageFilter);
   }
 
   @Get(':id')
@@ -48,12 +55,20 @@ export class AddressController {
   update(
     @Param('id', ParseIntPipe) id: number,
     @Body() data: UpdateAddressDto,
+    @Req() req: Request & { user: AuthUser },
   ) {
-    return this.addressService.Update(id, data);
+    const user = req.user as { id: number };
+
+    return this.addressService.Update(id, user.id, data);
   }
 
   @Delete(':id')
-  delete(@Param('id', ParseIntPipe) id: number) {
-    return this.addressService.Delete(id);
+  delete(
+    @Param('id', ParseIntPipe) id: number,
+    @Req() req: Request & { user: AuthUser },
+  ) {
+    const user = req.user as { id: number };
+
+    return this.addressService.Delete(id, user.id);
   }
 }

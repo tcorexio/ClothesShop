@@ -1,19 +1,19 @@
-import { IsOptional, IsString } from 'class-validator';
+import { IsNotEmpty, IsString, IsPhoneNumber } from 'class-validator';
 
 export class CreateAddressDto {
-  @IsOptional()
+  @IsNotEmpty()
   @IsString()
-  street?: string;
+  street: string;
 
-  @IsOptional()
+  @IsNotEmpty()
   @IsString()
-  city?: string;
+  city: string;
 
-  @IsOptional()
+  @IsNotEmpty()
   @IsString()
-  ward?: string;
+  ward: string;
 
-  @IsOptional()
-  @IsString()
-  phone?: string;
+  @IsNotEmpty()
+  @IsPhoneNumber('VN')
+  phone: string;
 }
