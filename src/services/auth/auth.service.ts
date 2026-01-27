@@ -1,6 +1,9 @@
 import {
   BadRequestException,
+  ForbiddenException,
+  Inject,
   Injectable,
+  NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
@@ -23,8 +26,7 @@ import {
 } from '@models/auth/auth.model';
 import { PrismaService } from '@services/prisma/prisma.service';
 import { MailService } from '@services/mail/mail.service';
-import { ROLE } from 'generated/prisma/enums';
-import { User } from 'generated/prisma/client';
+import { Role, User } from 'generated/prisma/client';
 
 @Injectable()
 export class AuthService implements IAuthService {
@@ -65,8 +67,7 @@ export class AuthService implements IAuthService {
         username: dto.username,
         email: dto.email,
         password: hashedPassword,
-        avatar: '',
-        role: ROLE.CUSTOMER,
+        role: Role.CUSTOMER,
       },
     });
 
@@ -86,10 +87,12 @@ export class AuthService implements IAuthService {
       throw new UnauthorizedException('Sai username hoặc mật khẩu');
     }
 
-    const isValidPassword = await bcrypt.compare(dto.password, user.password);
+    if (user.isDeleted) {
+      throw new ForbiddenException('Tài khoản đã bị vô hiệu hoá');
+    }
 
-    if (!isValidPassword) {
-      throw new UnauthorizedException('Sai email hoặc mật khẩu');
+    if (!(await bcrypt.compare(dto.password, user.password))) {
+      throw new UnauthorizedException('Sai mật khẩu');
     }
 
     const payload = {

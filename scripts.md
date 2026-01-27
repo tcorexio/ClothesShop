@@ -14,12 +14,12 @@ docker compose exec backend npx prisma generate
 
 ## Tạo migration mới
 ```bash
-npx prisma migrate dev --name <migration_name>
+docker compose exec backend npx prisma migrate dev --name <migration_name>
 ```
 
 ## Mở Prisma Studio
 ```bash
-docker compose exec backend sh npx prisma studio --port 5555
+docker compose exec backend sh npx prisma studio --port 5555 --browser none
 ```
 
 ### 3. Docker
