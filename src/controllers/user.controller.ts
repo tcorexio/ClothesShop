@@ -9,7 +9,6 @@ import {
   Patch,
   Post,
   Query,
-  UseGuards,
 } from '@nestjs/common';
 import { USER_SERVICE } from '@common/constant/service.interface.constant';
 import { CreateUserDto } from '@dto/user/create-user.dto';

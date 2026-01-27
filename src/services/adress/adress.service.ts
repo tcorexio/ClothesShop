@@ -10,7 +10,6 @@ import { AddressModel } from '@models/address/address.model';
 import { PrismaService } from '@services/prisma/prisma.service';
 import { PageResponseModel } from '@models/page/page-response.model';
 import { PageFilterDto } from '@dto/page/page-filter.dto';
-import { Prisma } from 'generated/prisma/client';
 
 @Injectable()
 export class AdressService implements IAddressService {

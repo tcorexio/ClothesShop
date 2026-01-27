@@ -10,7 +10,6 @@ import {
   Put,
   Query,
   Req,
-  UseGuards,
 } from '@nestjs/common';
 import type { IAddressService } from '@services/adress/address.serivce.interface';
 import type { Request } from 'express';
@@ -18,7 +17,6 @@ import { ADDRESS_SERVICE } from '@common/constant/service.interface.constant';
 import { CreateAddressDto } from '@dto/address/create-address.dto';
 import { UpdateAddressDto } from '@dto/address/update-address.dto';
 import { PageFilterDto } from '@dto/page/page-filter.dto';
-import { JwtAuthGuard } from 'src/guards/jwt-auth.guard';
 import { AuthUser } from '@dto/auth/auth-user.interface';
 
 @Controller('addresses')

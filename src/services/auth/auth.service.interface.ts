@@ -9,7 +9,6 @@ import {
   ResetPasswordModel,
   RefreshTokenModel,
 } from '@models/auth/auth.model';
-import { UserModel } from '@models/user/user.model';
 
 export interface IAuthService {
   login(dto: LoginDto): Promise<LoginModel>;
@@ -17,4 +16,5 @@ export interface IAuthService {
   forgotPassword(dto: ForgotPasswordDto): Promise<ForgotPasswordModel>;
   resetPassword(dto: ResetPasswordDto): Promise<ResetPasswordModel>;
   refreshToken(token: string): Promise<RefreshTokenModel>;
+  logout(refreshToken: string): Promise<void>;
 }
