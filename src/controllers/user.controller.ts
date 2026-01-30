@@ -16,7 +16,7 @@ import { UpdateUserDto } from '@dto/user/update-user.dto';
 import type { IUserService } from '@services/user/user.service.interface';
 import { UserFilterDto } from '@dto/user/user-filter.dto';
 import { Roles } from '@common/decorators/roles.decorator';
-import { Role } from 'generated/prisma/enums';
+import { ROLE } from 'generated/prisma/enums';
 
 @Controller('users')
 export class UserController {
@@ -25,7 +25,7 @@ export class UserController {
     private readonly userService: IUserService,
   ) {}
 
-  @Roles(Role.ADMIN)
+  @Roles(ROLE.ADMIN)
   @Post()
   create(@Body() dto: CreateUserDto) {
     return this.userService.Add(dto);
@@ -36,13 +36,13 @@ export class UserController {
     return this.userService.Update(id, dto);
   }
 
-  @Roles(Role.ADMIN)
+  @Roles(ROLE.ADMIN)
   @Delete(':id')
   softDelete(@Param('id', ParseIntPipe) id: number) {
     return this.userService.SoftDeleteAsync(id);
   }
 
-  @Roles(Role.ADMIN)
+  @Roles(ROLE.ADMIN)
   @Get('/search')
   getAll(@Query() dto: UserFilterDto) {
     return this.userService.GetAllPage(dto);

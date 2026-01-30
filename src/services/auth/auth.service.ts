@@ -24,7 +24,7 @@ import {
 } from '@models/auth/auth.model';
 import { PrismaService } from '@services/prisma/prisma.service';
 import { MailService } from '@services/mail/mail.service';
-import { Role } from 'generated/prisma/enums';
+import { ROLE } from 'generated/prisma/enums';
 import { User } from 'generated/prisma/client';
 import { REFRESHTOKEN_SERVICE } from '@common/constant/service.interface.constant';
 import type { IRefreshTokenService } from '@services/refresh-token/refresh-token.service.interface';
@@ -73,7 +73,7 @@ export class AuthService implements IAuthService {
         email: dto.email,
         password: hashedPassword,
         avatar: '',
-        role: Role.CUSTOMER,
+        role: ROLE.CUSTOMER,
       },
     });
 

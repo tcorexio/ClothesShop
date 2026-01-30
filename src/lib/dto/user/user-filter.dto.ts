@@ -6,7 +6,7 @@ import {
   IsPhoneNumber,
   IsString,
 } from 'class-validator';
-import { Role } from 'generated/prisma/enums';
+import { ROLE } from 'generated/prisma/enums';
 
 export class UserFilterDto extends PageFilterDto {
   @IsOptional()
@@ -26,6 +26,6 @@ export class UserFilterDto extends PageFilterDto {
   phone?: string;
 
   @IsOptional()
-  @IsEnum(Role)
-  role?: Role;
+  @IsEnum(ROLE)
+  role?: ROLE;
 }

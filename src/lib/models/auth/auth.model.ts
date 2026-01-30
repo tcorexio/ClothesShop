@@ -1,4 +1,4 @@
-import { Role } from 'generated/prisma/enums';
+import { ROLE } from 'generated/prisma/enums';
 
 export interface UserModel {
   id: number;
@@ -6,7 +6,7 @@ export interface UserModel {
   username: string;
   avatar?: string | null;
   phone?: string | null;
-  role: Role;
+  role: ROLE;
 }
 
 export interface AuthTokenModel {

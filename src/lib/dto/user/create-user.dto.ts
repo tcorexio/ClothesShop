@@ -10,7 +10,7 @@ import {
   IsPhoneNumber,
   Matches,
 } from 'class-validator';
-import { Role } from 'generated/prisma/enums';
+import { ROLE } from 'generated/prisma/enums';
 
 export class CreateUserDto {
   @IsNotEmpty()
@@ -54,6 +54,6 @@ export class CreateUserDto {
   phone: string;
 
   @IsNotEmpty()
-  @IsEnum(Role)
-  role: Role;
+  @IsEnum(ROLE)
+  role: ROLE;
 }
