@@ -85,7 +85,7 @@ export class AuthService implements IAuthService {
 
   /* ===================== LOGIN ===================== */
   async login(dto: LoginDto): Promise<LoginModel> {
-    const user = await this.prismaService.user.findFirst({
+    const user = await this.prismaService.user.findUnique({
       where: { username: dto.username },
     });
 
