@@ -6,6 +6,7 @@ services:
     ports:
       - '3000:3000'
       - '5555:5555'
+      - "51212:51212" 
     env_file:
       - .env
     volumes:
