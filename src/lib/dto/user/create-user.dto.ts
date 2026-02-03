@@ -10,7 +10,11 @@ import {
   IsPhoneNumber,
   Matches,
 } from 'class-validator';
+<<<<<<< HEAD
 import { ROLE } from 'generated/prisma/enums';
+=======
+import {  ROLE } from 'generated/prisma/enums';
+>>>>>>> b76e2d9 (wip(cart): update cart service interface)
 
 export class CreateUserDto {
   @IsNotEmpty()

@@ -14,6 +14,7 @@ import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { APP_GUARD } from '@nestjs/core';
 import { S3Service } from './services/s3/s3.service';
 import { S3Module } from './modules/s3/s3.module';
+import { CartModule } from '@modules/cart/cart.module';
 
 @Module({
   imports: [
@@ -24,6 +25,7 @@ import { S3Module } from './modules/s3/s3.module';
     RefreshTokenModule,
     UserModule,
     AddressModule,
+    CartModule,
     S3Module,
     ConfigModule.forRoot({
       isGlobal: true,

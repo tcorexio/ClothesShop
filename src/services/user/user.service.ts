@@ -10,6 +10,10 @@ import { UpdateUserDto } from '@dto/user/update-user.dto';
 import { PrismaService } from '@services/prisma/prisma.service';
 import { UserModel } from '@models/user/user.model';
 import * as bcrypt from 'bcrypt';
+<<<<<<< HEAD
+=======
+import { ROLE } from 'generated/prisma/enums';
+>>>>>>> b76e2d9 (wip(cart): update cart service interface)
 import { UserFilterDto } from '@dto/user/user-filter.dto';
 import { PageResponseModel } from '@models/page/page-response.model';
 import { Prisma } from 'generated/prisma/client';
