@@ -1,6 +1,6 @@
 import { IsOptional, IsEnum, IsDateString, IsInt, Min, Max } from "class-validator";
 import { Type } from "class-transformer";
-import { OrderStatus } from "@prisma/client";
+import { OrderStatus } from "generated/prisma/enums";
 
 export class FilterOrdersDto {
     @IsOptional()

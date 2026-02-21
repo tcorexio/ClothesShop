@@ -1,6 +1,6 @@
 import { IsOptional, IsEnum, IsDateString, IsInt, Min, Max } from "class-validator";
 import { Type } from "class-transformer";
-import { PaymentStatus } from "@prisma/client";
+import { PaymentStatus } from "generated/prisma/enums";
 
 export class FilterPaymentsDto {
     @IsOptional()

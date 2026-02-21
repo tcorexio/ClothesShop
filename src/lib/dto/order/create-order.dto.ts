@@ -1,7 +1,11 @@
 import { IsEnum, IsInt, IsPositive } from 'class-validator';
-import { PaymentMethod } from '@prisma/client';
+import { PaymentMethod } from 'generated/prisma/enums';
 
 export class CreateOrderDto {
+    @IsInt()
+    @IsPositive()
+    userId: number;
+
     @IsInt()
     @IsPositive()
     addressId: number;

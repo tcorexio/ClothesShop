@@ -1,5 +1,5 @@
 import { IsEnum, IsOptional, IsString, MaxLength } from "class-validator";
-import { OrderStatus } from "@prisma/client";
+import { OrderStatus } from "generated/prisma/enums";
 
 export class UpdateOrderStatusDto {
     @IsEnum(OrderStatus, {

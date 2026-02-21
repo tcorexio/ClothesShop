@@ -5,24 +5,31 @@ import { CreatePaymentLinkDto } from "@dto/payment/create-payment-link.dto";
 import { ConfirmPaymentDto } from "@dto/payment/confirm-payment.dto";
 import { PayOSWebhookDto } from "@dto/payment/payos-webhook.dto";
 import { FilterPaymentsDto } from "@dto/payment/filter-payments.dto";
-import { PaymentStatus, OrderStatus } from "@prisma/client";
+import { PaymentStatus, OrderStatus } from "generated/prisma/enums";
+import { PayOS } from "@payos/node";
 
 @Injectable()
 export class PaymentService implements IPaymentService {
-    private readonly PAYOS_CLIENT_ID: string;
-    private readonly PAYOS_API_KEY: string;
-    private readonly PAYOS_CHECKSUM_KEY: string;
+    private readonly payos: PayOS;
     private readonly PAYOS_RETURN_URL: string;
     private readonly PAYOS_CANCEL_URL: string;
 
     constructor(private readonly prisma: PrismaService) {
-        this.PAYOS_CLIENT_ID = process.env.PAYOS_CLIENT_ID || '';
-        this.PAYOS_API_KEY = process.env.PAYOS_API_KEY || '';
-        this.PAYOS_CHECKSUM_KEY = process.env.PAYOS_CHECKSUM_KEY || '';
+        console.log('PayOS Credentials Check:');
+        console.log('- CLIENT_ID:', process.env.PAYOS_CLIENT_ID ? 'EXISTS' : 'MISSING');
+        console.log('- API_KEY:', process.env.PAYOS_API_KEY ? 'EXISTS' : 'MISSING');
+        console.log('- CHECKSUM_KEY:', process.env.PAYOS_CHECKSUM_KEY ? 'EXISTS' : 'MISSING');
+        
+        this.payos = new PayOS({
+            clientId: process.env.PAYOS_CLIENT_ID || '',
+            apiKey: process.env.PAYOS_API_KEY || '',
+            checksumKey: process.env.PAYOS_CHECKSUM_KEY || '',
+        });
         this.PAYOS_RETURN_URL = process.env.PAYOS_RETURN_URL || 'http://localhost:3000/payment/success';
         this.PAYOS_CANCEL_URL = process.env.PAYOS_CANCEL_URL || 'http://localhost:3000/payment/cancel';
     }
 
+    // GET PAYMENT BY ORDER
     async getPaymentByOrderId(orderId: number) {
         const payment = await this.prisma.payment.findFirst({
             where: {
@@ -51,20 +58,13 @@ export class PaymentService implements IPaymentService {
         return payment;
     }
 
+    // CREATE PAYMENT LINK (PayOS)
     async createPaymentLink(dto: CreatePaymentLinkDto) {
         const order = await this.prisma.order.findFirst({
             where: { id: dto.orderId },
             include: {
                 payment: true,
-                items: {
-                    include: {
-                        variant: {
-                            include: {
-                                product: true,
-                            },
-                        },
-                    },
-                },
+                items: true,
             },
         });
 
@@ -84,51 +84,57 @@ export class PaymentService implements IPaymentService {
             throw new BadRequestException("Payment has already been processed");
         }
 
-        const paymentData = {
-            orderCode: order.id,
-            amount: Number(order.totalPrice),
-            description: "Payment for order " + order.id,
-            returnURL: this.PAYOS_RETURN_URL,
-            cancelURL: this.PAYOS_CANCEL_URL,
-        }
-
         try {
-            const response = await fetch("https://api-merchant.payos.vn/v2/payment-requests", {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                    "x-client-id": this.PAYOS_CLIENT_ID,
-                    "x-api-key": this.PAYOS_API_KEY,
-                },
-                body: JSON.stringify(paymentData),
-            });
+            // Create items for PayOS from order items
+            const items = order.items.map((item) => ({
+                name: item.productName,
+                quantity: item.quantity,
+                price: Number(item.price),
+            }));
 
-            if (!response.ok) {
-                const error = await response.json();
-                throw new BadRequestException(`PayOS API error: ${error.message || 'Unknown error'}`);
-            }
+            const paymentData = {
+                orderCode: order.id,
+                amount: Number(order.totalPrice),
+                description: `DH${order.id}`,
+                returnUrl: this.PAYOS_RETURN_URL,
+                cancelUrl: this.PAYOS_CANCEL_URL,
+                items,
+            };
 
-            const result = await response.json();
+            console.log('Creating PayOS payment link with data:', JSON.stringify(paymentData, null, 2));
+
+            const paymentLink = await this.payos.paymentRequests.create(paymentData);
 
             return {
-                paymentUrl: result.data.checkoutUrl,
-                qrCode: result.data.qrCode,
+                paymentUrl: paymentLink.checkoutUrl,
+                qrCode: paymentLink.qrCode,
                 orderId: order.id,
                 amount: order.totalPrice,
             };
         } catch (error) {
-            throw new BadRequestException(`Failed to create payment link: ${error.message}`);
+            console.error('PayOS error details:', error);
+            throw new BadRequestException(`Failed to create payment link: ${error.message || JSON.stringify(error)}`);
         }
     }
 
-    async handlePayOSWebhook(dto: PayOSWebhookDto) {
-        if (dto.code !== "00") {
-            throw new BadRequestException("Payment failed");
+    // HANDLE WEBHOOK FROM PayOS
+    async handlePayOSWebhook(webhookBody: PayOSWebhookDto) {
+        // Verify webhook signature by SDK
+        let webhookData;
+        try {
+            webhookData = await this.payos.webhooks.verify(webhookBody);
+        } catch (error) {
+            throw new BadRequestException(`Invalid webhook signature: ${error.message || error}`);
+        }
+
+        // Check success code from outer body
+        if (webhookBody.code !== "00") {
+            throw new BadRequestException(`Payment failed with code: ${webhookBody.code}`);
         }
 
         const payment = await this.prisma.payment.findFirst({
             where: {
-                orderId: dto.orderCode,
+                orderId: webhookData.orderCode,
                 isDeleted: false,
             },
             include: {
@@ -140,7 +146,7 @@ export class PaymentService implements IPaymentService {
             throw new NotFoundException("Payment not found");
         }
 
-        if (Number(payment.amount) !== dto.amount) {
+        if (Number(payment.amount) !== webhookData.amount) {
             throw new BadRequestException("Payment amount mismatch");
         }
 
@@ -153,8 +159,8 @@ export class PaymentService implements IPaymentService {
                 where: { id: payment.id },
                 data: {
                     status: PaymentStatus.PAID,
-                    transactionId: dto.reference,
-                    paidAt: new Date(dto.transactionDateTime),
+                    transactionId: webhookData.reference,
+                    paidAt: new Date(webhookData.transactionDateTime),
                 },
             });
 
@@ -172,6 +178,7 @@ export class PaymentService implements IPaymentService {
         };
     }
 
+    // CONFIRM PAYMENT (COD / Manual)
     async confirmPayment(dto: ConfirmPaymentDto) {
         const payment = await this.prisma.payment.findUnique({
             where: {
@@ -218,6 +225,7 @@ export class PaymentService implements IPaymentService {
         });
     }
 
+    // CANCEL PAYMENT
     async cancelPayment(paymentId: number) {
         const payment = await this.prisma.payment.findUnique({
             where: { id: paymentId },
@@ -231,6 +239,15 @@ export class PaymentService implements IPaymentService {
             throw new BadRequestException("Cannot cancel paid payment")
         }
 
+        // If BANK_TRANSFER, cancel payment link on PayOS
+        if (payment.method === "BANK_TRANSFER") {
+            try {
+                await this.payos.paymentRequests.cancel(payment.orderId);
+            } catch {
+                // Ignore if payment link does not exist on PayOS
+            }
+        }
+
         return this.prisma.payment.update({
             where: { id: paymentId },
             data: {
@@ -239,6 +256,7 @@ export class PaymentService implements IPaymentService {
         });
     }
 
+    // PAYMENT HISTORY
     async getPaymentHistory(filter: FilterPaymentsDto) {
         const { status, fromDate, toDate, page = 1, limit = 10 } = filter;
 
@@ -295,7 +313,7 @@ export class PaymentService implements IPaymentService {
         };
     }
 
-
+    // CHECK PAYMENT STATUS
     async checkPaymentStatus(orderId: number) {
         const payment = await this.prisma.payment.findFirst({
             where: { orderId },
@@ -313,30 +331,17 @@ export class PaymentService implements IPaymentService {
             };
         }
 
+        // Check payment status on PayOS by SDK
         try {
-            const response = await fetch(
-                `https://api-merchant.payos.vn/v2/payment-requests/${orderId}`,
-                {
-                    method: "GET",
-                    headers: {
-                        'x-client-id': this.PAYOS_CLIENT_ID,
-                        'x-api-key': this.PAYOS_API_KEY,
-                    },
-                }
-            );
-
-            if (!response.ok) {
-                throw new BadRequestException("Failed to check payment status from PayOS");
-            }
-
-            const result = await response.json();
+            const payosInfo = await this.payos.paymentRequests.get(orderId);
 
             return {
                 orderId,
                 localStatus: payment.status,
-                payosStatus: result.data.status,
-                amount: result.data.amount,
-                transactionDateTime: result.data.transactionDateTime,
+                payosStatus: payosInfo.status,
+                amount: payosInfo.amount,
+                amountPaid: payosInfo.amountPaid,
+                transactions: payosInfo.transactions,
             };
         } catch (error) {
             throw new BadRequestException(`Failed to check payment status: ${error.message}`);
