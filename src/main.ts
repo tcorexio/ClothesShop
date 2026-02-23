@@ -5,6 +5,8 @@ import { ValidationPipe } from '@nestjs/common';
 import cookieParser from 'cookie-parser';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { RolesGuard } from './guards/roles.guard';
+import { LoggingInterceptor } from './interceptors/logging.interceptor';
+import { TransformInterceptor } from './interceptors/transform.interceptor';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -22,6 +24,9 @@ async function bootstrap() {
   );
 
   app.useGlobalGuards(new JwtAuthGuard(reflector), new RolesGuard(reflector));
+
+  app.useGlobalInterceptors(new LoggingInterceptor());
+  app.useGlobalInterceptors(new TransformInterceptor());
 
   app.enableCors({
     credential: true,
