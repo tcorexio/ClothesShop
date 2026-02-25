@@ -1,14 +1,5 @@
-/*
-  Warnings:
-
-  - The primary key for the `users` table will be changed. If it partially fails, the table could be left without primary key constraint.
-  - You are about to drop the column `avatar` on the `users` table. All the data in the column will be lost.
-  - The `id` column on the `users` table would be dropped and recreated. This will lead to data loss if there is data in the column.
-  - The `role` column on the `users` table would be dropped and recreated. This will lead to data loss if there is data in the column.
-
-*/
 -- CreateEnum
-CREATE TYPE "Role" AS ENUM ('CUSTOMER', 'ADMIN');
+CREATE TYPE "ROLE" AS ENUM ('ADMIN', 'STAFF', 'CUSTOMER');
 
 -- CreateEnum
 CREATE TYPE "OrderStatus" AS ENUM ('PENDING', 'PROCESSED', 'SHIPPED', 'DELIVERED', 'CANCELLED');
@@ -19,27 +10,31 @@ CREATE TYPE "PaymentMethod" AS ENUM ('COD', 'BANK_TRANSFER');
 -- CreateEnum
 CREATE TYPE "PaymentStatus" AS ENUM ('PENDING', 'PAID', 'FAILED', 'REFUNDED');
 
--- AlterTable
-ALTER TABLE "users" DROP CONSTRAINT "users_pkey",
-DROP COLUMN "avatar",
-ADD COLUMN     "isDeleted" BOOLEAN NOT NULL DEFAULT false,
-DROP COLUMN "id",
-ADD COLUMN     "id" SERIAL NOT NULL,
-ALTER COLUMN "name" DROP NOT NULL,
-DROP COLUMN "role",
-ADD COLUMN     "role" "Role" NOT NULL DEFAULT 'CUSTOMER',
-ALTER COLUMN "updated_at" DROP NOT NULL,
-ADD CONSTRAINT "users_pkey" PRIMARY KEY ("id");
+-- CreateTable
+CREATE TABLE "users" (
+    "id" SERIAL NOT NULL,
+    "username" TEXT NOT NULL,
+    "email" TEXT NOT NULL,
+    "password" TEXT NOT NULL,
+    "name" TEXT,
+    "avatar" TEXT,
+    "phone" TEXT,
+    "role" "ROLE" NOT NULL DEFAULT 'CUSTOMER',
+    "resetToken" TEXT,
+    "resetTokenExpire" TIMESTAMP(3),
+    "isDeleted" BOOLEAN NOT NULL DEFAULT false,
+    "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMP(3),
 
--- DropEnum
-DROP TYPE "ROLE";
+    CONSTRAINT "users_pkey" PRIMARY KEY ("id")
+);
 
 -- CreateTable
 CREATE TABLE "addresses" (
     "id" SERIAL NOT NULL,
     "street" TEXT,
     "city" TEXT,
-    "district" TEXT,
+    "ward" TEXT,
     "phone" TEXT,
     "user_id" INTEGER NOT NULL,
     "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -187,6 +182,12 @@ CREATE TABLE "payments" (
 
     CONSTRAINT "payments_pkey" PRIMARY KEY ("id")
 );
+
+-- CreateIndex
+CREATE UNIQUE INDEX "users_username_key" ON "users"("username");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "users_email_key" ON "users"("email");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "refresh_tokens_token_key" ON "refresh_tokens"("token");

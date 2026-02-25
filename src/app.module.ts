@@ -8,10 +8,38 @@ import { MailModule } from '@modules/mail/mail.module.js';
 import { PaymentModule } from '@modules/payment/payment.module.js';
 import { OrderModule } from '@modules/order/order.module.js';
 import { JwtModule } from '@nestjs/jwt';
+import { RefreshTokenModule } from './modules/refresh-token/refresh-token.module';
+import { UserModule } from './modules/user/user.module';
+import { AddressModule } from './modules/address/address.module';
+import { ConfigModule, ConfigService } from '@nestjs/config';
+import { JwtAuthGuard } from './guards/jwt-auth.guard';
+import { APP_GUARD } from '@nestjs/core';
+import { S3Service } from './services/s3/s3.service';
+import { S3Module } from './modules/s3/s3.module';
+import { CartModule } from '@modules/cart/cart.module';
 
 @Module({
-  imports: [PrismaModule, AuthModule, MailModule, PaymentModule, OrderModule, JwtModule],
+  imports: [
+    PrismaModule,
+    AuthModule,
+    MailModule,
+    JwtModule,
+    RefreshTokenModule,
+    UserModule,
+    AddressModule,
+    CartModule,
+    S3Module,
+    ConfigModule.forRoot({
+      isGlobal: true,
+    }),
+  ],
   controllers: [AppController],
-  providers: [AppService],
+  providers: [
+    AppService,
+    {
+      provide: APP_GUARD,
+      useClass: JwtAuthGuard,
+    },
+  ],
 })
 export class AppModule { }

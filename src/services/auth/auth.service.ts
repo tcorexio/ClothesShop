@@ -1,5 +1,7 @@
 import {
   BadRequestException,
+  ForbiddenException,
+  Inject,
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common';
@@ -19,19 +21,23 @@ import {
   ForgotPasswordModel,
   ResetPasswordModel,
   RefreshTokenModel,
-  UserModel,
 } from '@models/auth/auth.model';
 import { PrismaService } from '@services/prisma/prisma.service';
 import { MailService } from '@services/mail/mail.service';
 import { ROLE } from 'generated/prisma/enums';
 import { User } from 'generated/prisma/client';
+import { REFRESHTOKEN_SERVICE } from '@common/constant/service.interface.constant';
+import type { IRefreshTokenService } from '@services/refresh-token/refresh-token.service.interface';
+import { UserModel } from '@models/user/user.model';
 
 @Injectable()
 export class AuthService implements IAuthService {
   constructor(
-    private readonly prisma: PrismaService,
+    private readonly prismaService: PrismaService,
     private readonly jwtService: JwtService,
     private readonly mailService: MailService,
+    @Inject(REFRESHTOKEN_SERVICE)
+    private readonly refreshTokenService: IRefreshTokenService,
   ) {}
 
   /* ===================== PRIVATE MAPPER ===================== */
@@ -40,6 +46,7 @@ export class AuthService implements IAuthService {
       id: user.id,
       email: user.email,
       username: user.username,
+      name: user.name,
       avatar: user.avatar,
       phone: user.phone,
       role: user.role,
@@ -48,7 +55,7 @@ export class AuthService implements IAuthService {
 
   /* ===================== SIGN UP ===================== */
   async signup(dto: SignUpDto): Promise<SignUpModel> {
-    const existedUser = await this.prisma.user.findFirst({
+    const existedUser = await this.prismaService.user.findFirst({
       where: {
         OR: [{ email: dto.email }, { username: dto.username }],
       },
@@ -60,7 +67,7 @@ export class AuthService implements IAuthService {
 
     const hashedPassword = await bcrypt.hash(dto.password, 10);
 
-    const user = await this.prisma.user.create({
+    const user = await this.prismaService.user.create({
       data: {
         username: dto.username,
         email: dto.email,
@@ -78,7 +85,7 @@ export class AuthService implements IAuthService {
 
   /* ===================== LOGIN ===================== */
   async login(dto: LoginDto): Promise<LoginModel> {
-    const user = await this.prisma.user.findUnique({
+    const user = await this.prismaService.user.findUnique({
       where: { username: dto.username },
     });
 
@@ -86,24 +93,24 @@ export class AuthService implements IAuthService {
       throw new UnauthorizedException('Sai username hoặc mật khẩu');
     }
 
-    const isValidPassword = await bcrypt.compare(dto.password, user.password);
-
-    if (!isValidPassword) {
-      throw new UnauthorizedException('Sai email hoặc mật khẩu');
+    if (user.isDeleted) {
+      throw new ForbiddenException('Tài khoản đã bị vô hiệu hoá');
     }
 
-    const payload = {
-      sub: user.id,
-      role: user.role,
-    };
+    if (!(await bcrypt.compare(dto.password, user.password))) {
+      throw new UnauthorizedException('Sai mật khẩu');
+    }
 
-    const accessToken = this.jwtService.sign(payload, {
-      expiresIn: '15m',
-    });
+    const payload = { sub: user.id, role: user.role };
 
-    const refreshToken = this.jwtService.sign(payload, {
-      expiresIn: '7d',
-    });
+    const accessToken = this.jwtService.sign(payload, { expiresIn: '15m' });
+    const refreshToken = this.jwtService.sign(payload, { expiresIn: '7d' });
+
+    await this.refreshTokenService.save(
+      refreshToken,
+      user.id,
+      new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+    );
 
     return {
       accessToken,
@@ -112,28 +119,45 @@ export class AuthService implements IAuthService {
     };
   }
 
+  async logout(refreshToken: string): Promise<void> {
+    await this.refreshTokenService.revoke(refreshToken);
+  }
+
   /* ===================== REFRESH TOKEN ===================== */
   async refreshToken(token: string): Promise<RefreshTokenModel> {
-    try {
-      const payload = this.jwtService.verify(token);
+    const record = await this.refreshTokenService.getValid(token);
 
-      const accessToken = this.jwtService.sign(
-        {
-          sub: payload.sub,
-          role: payload.role,
-        },
-        { expiresIn: '15m' },
-      );
+    // revoke token cũ (rotation)
+    await this.refreshTokenService.revoke(token);
 
-      return { accessToken };
-    } catch {
-      throw new UnauthorizedException('Refresh token không hợp lệ');
-    }
+    const payload = {
+      sub: record.user.id,
+      role: record.user.role,
+    };
+
+    const accessToken = this.jwtService.sign(payload, {
+      expiresIn: '15m',
+    });
+
+    const newRefreshToken = this.jwtService.sign(payload, {
+      expiresIn: '7d',
+    });
+
+    await this.refreshTokenService.save(
+      newRefreshToken,
+      record.user.id,
+      new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+    );
+
+    return {
+      accessToken,
+      refreshToken: newRefreshToken,
+    };
   }
 
   /* ===================== FORGOT PASSWORD ===================== */
   async forgotPassword(dto: ForgotPasswordDto): Promise<ForgotPasswordModel> {
-    const user = await this.prisma.user.findUnique({
+    const user = await this.prismaService.user.findUnique({
       where: { email: dto.email },
     });
 
@@ -146,7 +170,7 @@ export class AuthService implements IAuthService {
       { expiresIn: '10m' },
     );
 
-    await this.prisma.user.update({
+    await this.prismaService.user.update({
       where: { id: user.id },
       data: {
         resetToken,
@@ -163,7 +187,7 @@ export class AuthService implements IAuthService {
 
   /* ===================== RESET PASSWORD ===================== */
   async resetPassword(dto: ResetPasswordDto): Promise<ResetPasswordModel> {
-    const user = await this.prisma.user.findFirst({
+    const user = await this.prismaService.user.findFirst({
       where: {
         resetToken: dto.token,
         resetTokenExpire: {
@@ -178,7 +202,7 @@ export class AuthService implements IAuthService {
 
     const hashedPassword = await bcrypt.hash(dto.newPassword, 10);
 
-    await this.prisma.user.update({
+    await this.prismaService.user.update({
       where: { id: user.id },
       data: {
         password: hashedPassword,
