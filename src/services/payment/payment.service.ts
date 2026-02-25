@@ -1,0 +1,350 @@
+import { Injectable, BadRequestException, NotFoundException } from "@nestjs/common";
+import { PrismaService } from "@services/prisma/prisma.service";
+import { IPaymentService } from "./payment.service.interface";
+import { CreatePaymentLinkDto } from "@dto/payment/create-payment-link.dto";
+import { ConfirmPaymentDto } from "@dto/payment/confirm-payment.dto";
+import { PayOSWebhookDto } from "@dto/payment/payos-webhook.dto";
+import { FilterPaymentsDto } from "@dto/payment/filter-payments.dto";
+import { PaymentStatus, OrderStatus } from "generated/prisma/enums";
+import { PayOS } from "@payos/node";
+
+@Injectable()
+export class PaymentService implements IPaymentService {
+    private readonly payos: PayOS;
+    private readonly PAYOS_RETURN_URL: string;
+    private readonly PAYOS_CANCEL_URL: string;
+
+    constructor(private readonly prisma: PrismaService) {
+        console.log('PayOS Credentials Check:');
+        console.log('- CLIENT_ID:', process.env.PAYOS_CLIENT_ID ? 'EXISTS' : 'MISSING');
+        console.log('- API_KEY:', process.env.PAYOS_API_KEY ? 'EXISTS' : 'MISSING');
+        console.log('- CHECKSUM_KEY:', process.env.PAYOS_CHECKSUM_KEY ? 'EXISTS' : 'MISSING');
+        
+        this.payos = new PayOS({
+            clientId: process.env.PAYOS_CLIENT_ID || '',
+            apiKey: process.env.PAYOS_API_KEY || '',
+            checksumKey: process.env.PAYOS_CHECKSUM_KEY || '',
+        });
+        this.PAYOS_RETURN_URL = process.env.PAYOS_RETURN_URL || 'http://localhost:3000/payment/success';
+        this.PAYOS_CANCEL_URL = process.env.PAYOS_CANCEL_URL || 'http://localhost:3000/payment/cancel';
+    }
+
+    // GET PAYMENT BY ORDER
+    async getPaymentByOrderId(orderId: number) {
+        const payment = await this.prisma.payment.findFirst({
+            where: {
+                orderId,
+                isDeleted: false,
+            },
+            include: {
+                order: {
+                    include: {
+                        user: {
+                            select: {
+                                id: true,
+                                username: true,
+                                email: true,
+                            },
+                        },
+                    },
+                },
+            },
+        });
+
+        if (!payment) {
+            throw new NotFoundException('Payment not found');
+        }
+
+        return payment;
+    }
+
+    // CREATE PAYMENT LINK (PayOS)
+    async createPaymentLink(dto: CreatePaymentLinkDto) {
+        const order = await this.prisma.order.findFirst({
+            where: { id: dto.orderId },
+            include: {
+                payment: true,
+                items: true,
+            },
+        });
+
+        if (!order) {
+            throw new NotFoundException("Order not found");
+        }
+
+        if (!order.payment) {
+            throw new BadRequestException("Payment not found for this order");
+        }
+
+        if (order.payment.method !== "BANK_TRANSFER") {
+            throw new BadRequestException("Payment method must be BANK_TRANSFER");
+        }
+
+        if (order.payment.status !== PaymentStatus.PENDING) {
+            throw new BadRequestException("Payment has already been processed");
+        }
+
+        try {
+            // Create items for PayOS from order items
+            const items = order.items.map((item) => ({
+                name: item.productName,
+                quantity: item.quantity,
+                price: Number(item.price),
+            }));
+
+            const paymentData = {
+                orderCode: order.id,
+                amount: Number(order.totalPrice),
+                description: `DH${order.id}`,
+                returnUrl: this.PAYOS_RETURN_URL,
+                cancelUrl: this.PAYOS_CANCEL_URL,
+                items,
+            };
+
+            console.log('Creating PayOS payment link with data:', JSON.stringify(paymentData, null, 2));
+
+            const paymentLink = await this.payos.paymentRequests.create(paymentData);
+
+            return {
+                paymentUrl: paymentLink.checkoutUrl,
+                qrCode: paymentLink.qrCode,
+                orderId: order.id,
+                amount: order.totalPrice,
+            };
+        } catch (error) {
+            console.error('PayOS error details:', error);
+            throw new BadRequestException(`Failed to create payment link: ${error.message || JSON.stringify(error)}`);
+        }
+    }
+
+    // HANDLE WEBHOOK FROM PayOS
+    async handlePayOSWebhook(webhookBody: PayOSWebhookDto) {
+        // Verify webhook signature by SDK
+        let webhookData;
+        try {
+            webhookData = await this.payos.webhooks.verify(webhookBody);
+        } catch (error) {
+            throw new BadRequestException(`Invalid webhook signature: ${error.message || error}`);
+        }
+
+        // Check success code from outer body
+        if (webhookBody.code !== "00") {
+            throw new BadRequestException(`Payment failed with code: ${webhookBody.code}`);
+        }
+
+        const payment = await this.prisma.payment.findFirst({
+            where: {
+                orderId: webhookData.orderCode,
+                isDeleted: false,
+            },
+            include: {
+                order: true,
+            },
+        });
+
+        if (!payment) {
+            throw new NotFoundException("Payment not found");
+        }
+
+        if (Number(payment.amount) !== webhookData.amount) {
+            throw new BadRequestException("Payment amount mismatch");
+        }
+
+        if (payment.status == PaymentStatus.PAID) {
+            return { message: "Payment already processed" }
+        }
+
+        await this.prisma.$transaction(async (tx) => {
+            await tx.payment.update({
+                where: { id: payment.id },
+                data: {
+                    status: PaymentStatus.PAID,
+                    transactionId: webhookData.reference,
+                    paidAt: new Date(webhookData.transactionDateTime),
+                },
+            });
+
+            await tx.order.update({
+                where: { id: payment.orderId },
+                data: {
+                    status: OrderStatus.PROCESSED,
+                },
+            });
+        });
+
+        return {
+            message: "Payment processed successfully",
+            orderId: payment.orderId,
+        };
+    }
+
+    // CONFIRM PAYMENT (COD / Manual)
+    async confirmPayment(dto: ConfirmPaymentDto) {
+        const payment = await this.prisma.payment.findUnique({
+            where: {
+                id: dto.paymentId
+            },
+            include: {
+                order: true
+            },
+        });
+
+        if (!payment) {
+            throw new NotFoundException("Payment not found");
+        }
+
+        if (payment.status == PaymentStatus.PAID) {
+            throw new BadRequestException("Payment has already been confirmed");
+        }
+
+        await this.prisma.$transaction(async (tx) => {
+            await tx.payment.update({
+                where: { id: payment.id },
+                data: {
+                    status: PaymentStatus.PAID,
+                    transactionId: dto.transactionId,
+                    paidAt: new Date(),
+                },
+            });
+
+            if (payment.order.status == OrderStatus.PENDING) {
+                await tx.order.update({
+                    where: { id: payment.orderId },
+                    data: {
+                        status: OrderStatus.PROCESSED,
+                    },
+                });
+            }
+        });
+
+        return this.prisma.payment.findUnique({
+            where: { id: payment.id },
+            include: {
+                order: true,
+            },
+        });
+    }
+
+    // CANCEL PAYMENT
+    async cancelPayment(paymentId: number) {
+        const payment = await this.prisma.payment.findUnique({
+            where: { id: paymentId },
+        });
+
+        if (!payment) {
+            throw new NotFoundException("Payment not found");
+        }
+
+        if (payment.status == PaymentStatus.PAID) {
+            throw new BadRequestException("Cannot cancel paid payment")
+        }
+
+        // If BANK_TRANSFER, cancel payment link on PayOS
+        if (payment.method === "BANK_TRANSFER") {
+            try {
+                await this.payos.paymentRequests.cancel(payment.orderId);
+            } catch {
+                // Ignore if payment link does not exist on PayOS
+            }
+        }
+
+        return this.prisma.payment.update({
+            where: { id: paymentId },
+            data: {
+                status: PaymentStatus.FAILED,
+            },
+        });
+    }
+
+    // PAYMENT HISTORY
+    async getPaymentHistory(filter: FilterPaymentsDto) {
+        const { status, fromDate, toDate, page = 1, limit = 10 } = filter;
+
+        const where: any = {
+            isDeleted: false,
+        };
+
+        if (status) {
+            where.status = status;
+        }
+
+        if (fromDate || toDate) {
+            where.createdAt = {};
+
+            if (fromDate) {
+                where.createdAt.gte = new Date(fromDate);
+            }
+
+            if (toDate) {
+                where.createdAt.lte = new Date(toDate);
+            }
+        }
+
+        const total = await this.prisma.payment.count({ where });
+
+        const payments = await this.prisma.payment.findMany({
+            where,
+            skip: (page - 1) * limit,
+            take: limit,
+            orderBy: { createdAt: "desc" },
+            include: {
+                order: {
+                    include: {
+                        user: {
+                            select: {
+                                id: true,
+                                username: true,
+                                email: true,
+                            },
+                        },
+                    },
+                },
+            },
+        });
+
+        return {
+            data: payments,
+            meta: {
+                total,
+                page,
+                limit,
+                totalPages: Math.ceil(total / limit),
+            },
+        };
+    }
+
+    // CHECK PAYMENT STATUS
+    async checkPaymentStatus(orderId: number) {
+        const payment = await this.prisma.payment.findFirst({
+            where: { orderId },
+        });
+
+        if (!payment) {
+            throw new NotFoundException("Payment not found");
+        }
+
+        if (payment.method == "COD") {
+            return {
+                orderId,
+                status: payment.status,
+                message: "COD payment, manual confirmation required",
+            };
+        }
+
+        // Check payment status on PayOS by SDK
+        try {
+            const payosInfo = await this.payos.paymentRequests.get(orderId);
+
+            return {
+                orderId,
+                localStatus: payment.status,
+                payosStatus: payosInfo.status,
+                amount: payosInfo.amount,
+                amountPaid: payosInfo.amountPaid,
+                transactions: payosInfo.transactions,
+            };
+        } catch (error) {
+            throw new BadRequestException(`Failed to check payment status: ${error.message}`);
+        }
+    }
+}
