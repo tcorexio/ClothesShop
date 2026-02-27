@@ -7,3 +7,5 @@ export const USER_SERVICE = Symbol('USER_SERVICE');
 export const ADDRESS_SERVICE = Symbol('ADDRESS_SERVICE');
 
 export const CART_SERVICE = Symbol('CART_SERVICE');
+
+export const STATISTIC_SERVICE = Symbol('STATISTIC_SERVICE');

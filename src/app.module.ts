@@ -17,6 +17,7 @@ import { APP_GUARD } from '@nestjs/core';
 import { S3Service } from './services/s3/s3.service';
 import { S3Module } from './modules/s3/s3.module';
 import { CartModule } from '@modules/cart/cart.module';
+import { StatisticModule } from './modules/statistic/statistic.module';
 
 @Module({
   imports: [
@@ -28,6 +29,7 @@ import { CartModule } from '@modules/cart/cart.module';
     UserModule,
     AddressModule,
     CartModule,
+    StatisticModule,
     S3Module,
     ConfigModule.forRoot({
       isGlobal: true,

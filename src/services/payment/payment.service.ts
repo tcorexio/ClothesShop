@@ -19,7 +19,7 @@ export class PaymentService implements IPaymentService {
         console.log('- CLIENT_ID:', process.env.PAYOS_CLIENT_ID ? 'EXISTS' : 'MISSING');
         console.log('- API_KEY:', process.env.PAYOS_API_KEY ? 'EXISTS' : 'MISSING');
         console.log('- CHECKSUM_KEY:', process.env.PAYOS_CHECKSUM_KEY ? 'EXISTS' : 'MISSING');
-        
+
         this.payos = new PayOS({
             clientId: process.env.PAYOS_CLIENT_ID || '',
             apiKey: process.env.PAYOS_API_KEY || '',
@@ -29,7 +29,6 @@ export class PaymentService implements IPaymentService {
         this.PAYOS_CANCEL_URL = process.env.PAYOS_CANCEL_URL || 'http://localhost:3000/payment/cancel';
     }
 
-    // GET PAYMENT BY ORDER
     async getPaymentByOrderId(orderId: number) {
         const payment = await this.prisma.payment.findFirst({
             where: {
@@ -58,7 +57,6 @@ export class PaymentService implements IPaymentService {
         return payment;
     }
 
-    // CREATE PAYMENT LINK (PayOS)
     async createPaymentLink(dto: CreatePaymentLinkDto) {
         const order = await this.prisma.order.findFirst({
             where: { id: dto.orderId },
@@ -85,7 +83,6 @@ export class PaymentService implements IPaymentService {
         }
 
         try {
-            // Create items for PayOS from order items
             const items = order.items.map((item) => ({
                 name: item.productName,
                 quantity: item.quantity,
@@ -117,9 +114,8 @@ export class PaymentService implements IPaymentService {
         }
     }
 
-    // HANDLE WEBHOOK FROM PayOS
     async handlePayOSWebhook(webhookBody: PayOSWebhookDto) {
-        // Verify webhook signature by SDK
+        // Verify webhook signature using the PayOS SDK
         let webhookData;
         try {
             webhookData = await this.payos.webhooks.verify(webhookBody);
@@ -127,7 +123,6 @@ export class PaymentService implements IPaymentService {
             throw new BadRequestException(`Invalid webhook signature: ${error.message || error}`);
         }
 
-        // Check success code from outer body
         if (webhookBody.code !== "00") {
             throw new BadRequestException(`Payment failed with code: ${webhookBody.code}`);
         }
@@ -178,7 +173,7 @@ export class PaymentService implements IPaymentService {
         };
     }
 
-    // CONFIRM PAYMENT (COD / Manual)
+    // Manual payment confirmation — used for COD or admin override
     async confirmPayment(dto: ConfirmPaymentDto) {
         const payment = await this.prisma.payment.findUnique({
             where: {
@@ -225,7 +220,6 @@ export class PaymentService implements IPaymentService {
         });
     }
 
-    // CANCEL PAYMENT
     async cancelPayment(paymentId: number) {
         const payment = await this.prisma.payment.findUnique({
             where: { id: paymentId },
@@ -239,12 +233,12 @@ export class PaymentService implements IPaymentService {
             throw new BadRequestException("Cannot cancel paid payment")
         }
 
-        // If BANK_TRANSFER, cancel payment link on PayOS
+        // For BANK_TRANSFER, cancel the outstanding payment link on PayOS
         if (payment.method === "BANK_TRANSFER") {
             try {
                 await this.payos.paymentRequests.cancel(payment.orderId);
             } catch {
-                // Ignore if payment link does not exist on PayOS
+                // Ignore if the payment link no longer exists on PayOS
             }
         }
 
@@ -256,7 +250,6 @@ export class PaymentService implements IPaymentService {
         });
     }
 
-    // PAYMENT HISTORY
     async getPaymentHistory(filter: FilterPaymentsDto) {
         const { status, fromDate, toDate, page = 1, limit = 10 } = filter;
 
@@ -313,7 +306,6 @@ export class PaymentService implements IPaymentService {
         };
     }
 
-    // CHECK PAYMENT STATUS
     async checkPaymentStatus(orderId: number) {
         const payment = await this.prisma.payment.findFirst({
             where: { orderId },
@@ -331,7 +323,7 @@ export class PaymentService implements IPaymentService {
             };
         }
 
-        // Check payment status on PayOS by SDK
+        // Fetch live payment status from PayOS to compare with local DB
         try {
             const payosInfo = await this.payos.paymentRequests.get(orderId);
 

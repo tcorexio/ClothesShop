@@ -4,156 +4,223 @@ import * as bcrypt from 'bcrypt';
 import 'dotenv/config';
 
 async function main() {
-    // Replace Docker hostname with localhost for running on host machine
+    // When running locally, replace Docker hostname 'postgres' with 'localhost'
     const dbUrl = (process.env.DATABASE_URL || '').replace('@postgres:', '@localhost:');
-    const adapter = new PrismaPg({
-        connectionString: dbUrl,
-    });
+    const adapter = new PrismaPg({ connectionString: dbUrl });
     const prisma = new PrismaClient({ adapter });
 
-    console.log('Seeding database:');
+    console.log('Seeding database...');
 
-    // 1. Create test user
     const passwordHash = await bcrypt.hash('Test@1234', 10);
 
-    const user = await prisma.user.upsert({
-        where: { email: 'test@example.com' },
+    const admin = await prisma.user.upsert({
+        where: { email: 'admin@clothesshop.com' },
         update: {},
         create: {
-            username: 'testuser',
-            email: 'test@example.com',
+            username: 'admin',
+            email: 'admin@clothesshop.com',
             password: passwordHash,
-            name: 'Nguyen Van Test',
-            phone: '0901234567',
+            name: 'Admin',
+            role: 'ADMIN',
+        },
+    });
+
+    const customer1 = await prisma.user.upsert({
+        where: { email: 'nguyen@example.com' },
+        update: {},
+        create: {
+            username: 'nguyenvan',
+            email: 'nguyen@example.com',
+            password: passwordHash,
+            name: 'Nguyen Van A',
+            phone: '0901111111',
             role: 'CUSTOMER',
         },
     });
-    console.log(`User created: ${user.username} (id: ${user.id})`);
 
-    // 2. Create address for user
-    const address = await prisma.address.upsert({
-        where: { id: 1 },
+    const customer2 = await prisma.user.upsert({
+        where: { email: 'tran@example.com' },
         update: {},
         create: {
-            userId: user.id,
-            street: '123 Nguyen Trai',
-            district: 'Quan 1',
-            city: 'Ho Chi Minh',
-            phone: '0901234567',
+            username: 'tranle',
+            email: 'tran@example.com',
+            password: passwordHash,
+            name: 'Tran Thi B',
+            phone: '0902222222',
+            role: 'CUSTOMER',
         },
     });
-    console.log(`Address created (id: ${address.id})`);
 
-    // 3. Create categories
-    const categoryAo = await prisma.category.upsert({
+    const catAo = await prisma.category.upsert({ where: { id: 1 }, update: {}, create: { title: 'Ao' } });
+    const catQuan = await prisma.category.upsert({ where: { id: 2 }, update: {}, create: { title: 'Quan' } });
+    const catPhu = await prisma.category.upsert({ where: { id: 3 }, update: {}, create: { title: 'Phu kien' } });
+
+    // Low prices to test PayOS without spending real money
+    const p1 = await prisma.product.upsert({
         where: { id: 1 },
-        update: {},
-        create: { title: 'Áo' },
+        update: { price: 1000 },
+        create: { name: 'Ao Thun Basic', description: 'Ao thun cotton thoang mat', price: 1000, categoryId: catAo.id },
     });
-
-    const categoryQuan = await prisma.category.upsert({
+    const p2 = await prisma.product.upsert({
         where: { id: 2 },
-        update: {},
-        create: { title: 'Quần' },
+        update: { price: 2000 },
+        create: { name: 'Ao Polo Classic', description: 'Ao polo lich su, phu hop di lam', price: 2000, categoryId: catAo.id },
     });
-    console.log(`Categories created: ${categoryAo.title}, ${categoryQuan.title}`);
-
-    // 4. Create products
-    const product1 = await prisma.product.upsert({
-        where: { id: 1 },
-        update: {},
-        create: {
-            name: 'Áo Thun Basic',
-            description: 'Áo thun cotton basic, thoáng mát, dễ phối đồ.',
-            price: 150000,
-            categoryId: categoryAo.id,
-            isActive: true,
-        },
+    const p3 = await prisma.product.upsert({
+        where: { id: 3 },
+        update: { price: 1000 },
+        create: { name: 'Quan Jean Slim Fit', description: 'Quan jean co gian tot', price: 1000, categoryId: catQuan.id },
+    });
+    const p4 = await prisma.product.upsert({
+        where: { id: 4 },
+        update: { price: 2000 },
+        create: { name: 'Quan Kaki Chinos', description: 'Quan kaki thoi trang', price: 2000, categoryId: catQuan.id },
+    });
+    const p5 = await prisma.product.upsert({
+        where: { id: 5 },
+        update: { price: 1000 },
+        create: { name: 'Mu Luoi Trai', description: 'Mu the thao nang dong', price: 1000, categoryId: catPhu.id },
     });
 
-    const product2 = await prisma.product.upsert({
-        where: { id: 2 },
-        update: {},
-        create: {
-            name: 'Quần Jean Slim Fit',
-            description: 'Quần jean slim fit, co giãn tốt.',
-            price: 350000,
-            categoryId: categoryQuan.id,
-            isActive: true,
-        },
+    const v1 = await prisma.productVariant.upsert({
+        where: { productId_size_color: { productId: p1.id, size: 'M', color: 'Trang' } },
+        update: { stock: 100 },
+        create: { productId: p1.id, size: 'M', color: 'Trang', stock: 100 },
     });
-    console.log(`Products created: ${product1.name}, ${product2.name}`);
-
-    // 5. Create product variants
-    const variant1 = await prisma.productVariant.upsert({
-        where: { productId_size_color: { productId: product1.id, size: 'M', color: 'Trắng' } },
+    const v2 = await prisma.productVariant.upsert({
+        where: { productId_size_color: { productId: p1.id, size: 'L', color: 'Den' } },
+        update: { stock: 80 },
+        create: { productId: p1.id, size: 'L', color: 'Den', stock: 80 },
+    });
+    const v3 = await prisma.productVariant.upsert({
+        where: { productId_size_color: { productId: p2.id, size: 'M', color: 'Xanh navy' } },
+        update: { stock: 60 },
+        create: { productId: p2.id, size: 'M', color: 'Xanh navy', stock: 60 },
+    });
+    const v4 = await prisma.productVariant.upsert({
+        where: { productId_size_color: { productId: p3.id, size: '32', color: 'Xanh dam' } },
         update: { stock: 50 },
-        create: {
-            productId: product1.id,
-            size: 'M',
-            color: 'Trắng',
-            stock: 50,
-        },
+        create: { productId: p3.id, size: '32', color: 'Xanh dam', stock: 50 },
+    });
+    const v5 = await prisma.productVariant.upsert({
+        where: { productId_size_color: { productId: p4.id, size: '32', color: 'Be' } },
+        update: { stock: 70 },
+        create: { productId: p4.id, size: '32', color: 'Be', stock: 70 },
+    });
+    const v6 = await prisma.productVariant.upsert({
+        where: { productId_size_color: { productId: p5.id, size: 'Free', color: 'Den' } },
+        update: { stock: 200 },
+        create: { productId: p5.id, size: 'Free', color: 'Den', stock: 200 },
     });
 
-    const variant2 = await prisma.productVariant.upsert({
-        where: { productId_size_color: { productId: product1.id, size: 'L', color: 'Đen' } },
-        update: { stock: 30 },
-        create: {
-            productId: product1.id,
-            size: 'L',
-            color: 'Đen',
-            stock: 30,
-        },
+    // Helper to quickly create a shipping address snapshot for each order
+    async function createOrderAddress(name: string) {
+        return prisma.orderAddress.create({
+            data: { fullName: name, phone: '0909123456', street: '100 Le Loi', city: 'Ho Chi Minh' },
+        });
+    }
+
+    // 4 DELIVERED orders — used to test revenue statistics
+    const oa1 = await createOrderAddress(customer1.name!);
+    const order1 = await prisma.order.create({
+        data: { userId: customer1.id, orderAddressId: oa1.id, totalPrice: 4000, status: 'DELIVERED', createdAt: new Date('2026-01-10') },
     });
-
-    const variant3 = await prisma.productVariant.upsert({
-        where: { productId_size_color: { productId: product2.id, size: '32', color: 'Xanh đậm' } },
-        update: { stock: 20 },
-        create: {
-            productId: product2.id,
-            size: '32',
-            color: 'Xanh đậm',
-            stock: 20,
-        },
+    await prisma.orderItem.createMany({
+        data: [
+            { orderId: order1.id, variantId: v1.id, quantity: 2, productName: p1.name, variantSize: 'M', variantColor: 'Trang', price: 1000 },
+            { orderId: order1.id, variantId: v3.id, quantity: 1, productName: p2.name, variantSize: 'M', variantColor: 'Xanh navy', price: 2000 },
+        ]
     });
-    console.log(`Variants created: ${variant1.id}, ${variant2.id}, ${variant3.id}`);
+    await prisma.payment.create({ data: { orderId: order1.id, method: 'BANK_TRANSFER', status: 'PAID', amount: 4000, paidAt: new Date('2026-01-11') } });
 
-    // 6. Create cart + cart items for user
-    const cart = await prisma.cart.upsert({
-        where: { userId: user.id },
-        update: {},
-        create: { userId: user.id },
+    const oa2 = await createOrderAddress(customer2.name!);
+    const order2 = await prisma.order.create({
+        data: { userId: customer2.id, orderAddressId: oa2.id, totalPrice: 2000, status: 'DELIVERED', createdAt: new Date('2026-01-15') },
     });
-
-    // Clear existing cart items
-    await prisma.cartItem.deleteMany({ where: { cartId: cart.id } });
-
-    await prisma.cartItem.create({
-        data: {
-            cartId: cart.id,
-            variantId: variant1.id,
-            quantity: 2,
-        },
+    await prisma.orderItem.createMany({
+        data: [
+            { orderId: order2.id, variantId: v4.id, quantity: 2, productName: p3.name, variantSize: '32', variantColor: 'Xanh dam', price: 1000 },
+        ]
     });
+    await prisma.payment.create({ data: { orderId: order2.id, method: 'COD', status: 'PAID', amount: 2000, paidAt: new Date('2026-01-15') } });
 
-    await prisma.cartItem.create({
-        data: {
-            cartId: cart.id,
-            variantId: variant3.id,
-            quantity: 1,
-        },
+    const oa3 = await createOrderAddress(customer1.name!);
+    const order3 = await prisma.order.create({
+        data: { userId: customer1.id, orderAddressId: oa3.id, totalPrice: 5000, status: 'DELIVERED', createdAt: new Date('2026-02-05') },
     });
-    console.log(`Cart created with 2 items (Áo Thun x2, Quần Jean x1)`);
+    await prisma.orderItem.createMany({
+        data: [
+            { orderId: order3.id, variantId: v1.id, quantity: 1, productName: p1.name, variantSize: 'M', variantColor: 'Trang', price: 1000 },
+            { orderId: order3.id, variantId: v4.id, quantity: 1, productName: p3.name, variantSize: '32', variantColor: 'Xanh dam', price: 1000 },
+            { orderId: order3.id, variantId: v5.id, quantity: 1, productName: p4.name, variantSize: '32', variantColor: 'Be', price: 2000 },
+            { orderId: order3.id, variantId: v6.id, quantity: 1, productName: p5.name, variantSize: 'Free', variantColor: 'Den', price: 1000 },
+        ]
+    });
+    await prisma.payment.create({ data: { orderId: order3.id, method: 'BANK_TRANSFER', status: 'PAID', amount: 5000, paidAt: new Date('2026-02-06') } });
 
-    console.log('\nSeed completed! Summary:');
-    console.log(`   User: testuser / Test@1234`);
-    console.log(`   Address ID: ${address.id}`);
-    console.log(`   Cart: 2x Áo Thun Basic (150,000₫) + 1x Quần Jean (350,000₫)`);
-    console.log(`   Total: 650,000₫`);
-    console.log('\nNext: Test in Postman');
-    console.log('   POST /orders  { "userId": ' + user.id + ', "addressId": ' + address.id + ', "paymentMethod": "BANK_TRANSFER" }');
-    console.log('   POST /payments/create-link  { "orderId": <orderId from above> }');
+    const oa4 = await createOrderAddress(customer2.name!);
+    const order4 = await prisma.order.create({
+        data: { userId: customer2.id, orderAddressId: oa4.id, totalPrice: 4000, status: 'DELIVERED', createdAt: new Date('2026-02-20') },
+    });
+    await prisma.orderItem.createMany({
+        data: [
+            { orderId: order4.id, variantId: v3.id, quantity: 2, productName: p2.name, variantSize: 'M', variantColor: 'Xanh navy', price: 2000 },
+        ]
+    });
+    await prisma.payment.create({ data: { orderId: order4.id, method: 'COD', status: 'PAID', amount: 4000, paidAt: new Date('2026-02-20') } });
+
+    // Other orders with different statuses to test order statistics
+    const oa5 = await createOrderAddress(customer1.name!);
+    const order5 = await prisma.order.create({
+        data: { userId: customer1.id, orderAddressId: oa5.id, totalPrice: 2000, status: 'SHIPPED', createdAt: new Date('2026-02-24') },
+    });
+    await prisma.orderItem.createMany({
+        data: [
+            { orderId: order5.id, variantId: v5.id, quantity: 1, productName: p4.name, variantSize: '32', variantColor: 'Be', price: 2000 },
+        ]
+    });
+    await prisma.payment.create({ data: { orderId: order5.id, method: 'COD', status: 'PENDING', amount: 2000 } });
+
+    const oa6 = await createOrderAddress(customer2.name!);
+    const order6 = await prisma.order.create({
+        data: { userId: customer2.id, orderAddressId: oa6.id, totalPrice: 3000, status: 'PROCESSED', createdAt: new Date('2026-02-25') },
+    });
+    await prisma.orderItem.createMany({
+        data: [
+            { orderId: order6.id, variantId: v2.id, quantity: 1, productName: p1.name, variantSize: 'L', variantColor: 'Den', price: 1000 },
+            { orderId: order6.id, variantId: v6.id, quantity: 2, productName: p5.name, variantSize: 'Free', variantColor: 'Den', price: 1000 },
+        ]
+    });
+    await prisma.payment.create({ data: { orderId: order6.id, method: 'BANK_TRANSFER', status: 'PAID', amount: 3000, paidAt: new Date('2026-02-25') } });
+
+    const oa7 = await createOrderAddress(customer1.name!);
+    const order7 = await prisma.order.create({
+        data: { userId: customer1.id, orderAddressId: oa7.id, totalPrice: 1000, status: 'CANCELLED', createdAt: new Date('2026-01-20') },
+    });
+    await prisma.orderItem.createMany({
+        data: [
+            { orderId: order7.id, variantId: v1.id, quantity: 1, productName: p1.name, variantSize: 'M', variantColor: 'Trang', price: 1000 },
+        ]
+    });
+    await prisma.payment.create({ data: { orderId: order7.id, method: 'COD', status: 'FAILED', amount: 1000 } });
+
+    const oa8 = await createOrderAddress(customer2.name!);
+    const order8 = await prisma.order.create({
+        data: { userId: customer2.id, orderAddressId: oa8.id, totalPrice: 2000, status: 'PENDING', createdAt: new Date('2026-02-27') },
+    });
+    await prisma.orderItem.createMany({
+        data: [
+            { orderId: order8.id, variantId: v4.id, quantity: 1, productName: p3.name, variantSize: '32', variantColor: 'Xanh dam', price: 1000 },
+            { orderId: order8.id, variantId: v6.id, quantity: 1, productName: p5.name, variantSize: 'Free', variantColor: 'Den', price: 1000 },
+        ]
+    });
+    await prisma.payment.create({ data: { orderId: order8.id, method: 'BANK_TRANSFER', status: 'PENDING', amount: 2000 } });
+
+    console.log('Seed done.');
+    console.log('  admin    / Test@1234');
+    console.log('  nguyenvan / Test@1234');
+    console.log('  tranle    / Test@1234');
+
 
     await prisma.$disconnect();
 }
