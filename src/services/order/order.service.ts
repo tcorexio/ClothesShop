@@ -72,8 +72,8 @@ export class OrderService implements IOrderService {
                         fullName: user.name || 'N/A',
                         phone: address.phone,
                         street: address.street,
-                        district: address.district,
                         city: address.city,
+                        district: null,
                     },
                 });
 
