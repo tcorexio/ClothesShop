@@ -2,9 +2,11 @@ import { Module } from '@nestjs/common';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 
-import { PrismaModule } from '@modules/prisma/prisma.module';
-import { AuthModule } from '@modules/auth/auth.module';
-import { MailModule } from '@modules/mail/mail.module';
+import { PrismaModule } from '@modules/prisma/prisma.module.js';
+import { AuthModule } from '@modules/auth/auth.module.js';
+import { MailModule } from '@modules/mail/mail.module.js';
+import { PaymentModule } from '@modules/payment/payment.module.js';
+import { OrderModule } from '@modules/order/order.module.js';
 import { JwtModule } from '@nestjs/jwt';
 import { RefreshTokenModule } from './modules/refresh-token/refresh-token.module';
 import { UserModule } from './modules/user/user.module';
@@ -18,6 +20,8 @@ import { CartModule } from '@modules/cart/cart.module';
 import { CategoryModule } from '@modules/category/category.module';
 import { ProductModule } from '@modules/product/product.module';
 import { ProductVariantModule } from '@modules/product-variant/product-variant.module';
+import { StatisticModule } from './modules/statistic/statistic.module';
+
 
 @Module({
   imports: [
@@ -29,6 +33,7 @@ import { ProductVariantModule } from '@modules/product-variant/product-variant.m
     UserModule,
     AddressModule,
     CartModule,
+    StatisticModule,
     S3Module,
     CategoryModule,
     ProductModule,
@@ -46,4 +51,4 @@ import { ProductVariantModule } from '@modules/product-variant/product-variant.m
     },
   ],
 })
-export class AppModule {}
+export class AppModule { }
