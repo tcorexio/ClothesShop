@@ -113,7 +113,7 @@ model RefreshToken {
 
 model Category {
   id    Int    @id @default(autoincrement())
-  title String
+  title String @unique
   isDeleted Boolean @default(false)
 
   // Relations

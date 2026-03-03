@@ -17,7 +17,11 @@ import { APP_GUARD } from '@nestjs/core';
 import { S3Service } from './services/s3/s3.service';
 import { S3Module } from './modules/s3/s3.module';
 import { CartModule } from '@modules/cart/cart.module';
+import { CategoryModule } from '@modules/category/category.module';
+import { ProductModule } from '@modules/product/product.module';
+import { ProductVariantModule } from '@modules/product-variant/product-variant.module';
 import { StatisticModule } from './modules/statistic/statistic.module';
+
 
 @Module({
   imports: [
@@ -31,6 +35,9 @@ import { StatisticModule } from './modules/statistic/statistic.module';
     CartModule,
     StatisticModule,
     S3Module,
+    CategoryModule,
+    ProductModule,
+    ProductVariantModule,
     ConfigModule.forRoot({
       isGlobal: true,
     }),
