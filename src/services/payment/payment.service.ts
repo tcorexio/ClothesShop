@@ -52,10 +52,13 @@ export class PaymentService implements IPaymentService {
         if (order.payment.method !== PaymentMethod.BANK_TRANSFER) throw new BadRequestException("Only BANK_TRANSFER orders can use PayOS");
         if (order.payment.status !== PaymentStatus.PENDING) throw new BadRequestException("Payment has already been processed");
 
+        // Calculate amount directly from items to ensure it matches PayOS (price * quantity)
+        const amount = order.items.reduce((sum, item) => sum + Number(item.price) * item.quantity, 0);
+
         try {
             const paymentLink = await this.payos.paymentRequests.create({
                 orderCode: order.id,
-                amount: Number(order.totalPrice),
+                amount,
                 description: `DH${order.id}`,
                 returnUrl: this.returnUrl,
                 cancelUrl: this.cancelUrl,
@@ -64,15 +67,31 @@ export class PaymentService implements IPaymentService {
                     quantity: item.quantity,
                     price: Number(item.price),
                 })),
-            });
+            }) as any;
 
-            return {
-                paymentUrl: paymentLink.checkoutUrl,
-                qrCode: paymentLink.qrCode,
-                orderId: order.id,
-                amount: order.totalPrice,
-            };
+            const checkoutUrl = paymentLink.checkoutUrl ?? paymentLink.data?.checkoutUrl ?? null;
+
+            // If checkoutUrl is missing, the link already exists on PayOS — fetch it instead
+            if (!checkoutUrl) {
+                const existing = await this.payos.paymentRequests.get(order.id) as any;
+                return {
+                    ...existing,
+                    checkoutUrl: existing.checkoutUrl ?? existing.data?.checkoutUrl ?? null,
+                    orderId: order.id,
+                };
+            }
+
+            return { ...paymentLink, checkoutUrl, orderId: order.id };
         } catch (error) {
+            // Fallback: code 231 means the link already exists (some SDK versions throw instead of returning)
+            if (error?.response?.data?.code === '231' || error?.message?.includes('231')) {
+                const existing = await this.payos.paymentRequests.get(order.id) as any;
+                return {
+                    ...existing,
+                    checkoutUrl: existing.checkoutUrl ?? existing.data?.checkoutUrl ?? null,
+                    orderId: order.id,
+                };
+            }
             throw new BadRequestException(`Failed to create payment link: ${error.message || error}`);
         }
     }
@@ -240,14 +259,41 @@ export class PaymentService implements IPaymentService {
 
         // Fetch live payment status from PayOS to compare with local DB
         try {
-            const payosInfo = await this.payos.paymentRequests.get(orderId);
+            const payosInfo = await this.payos.paymentRequests.get(orderId) as any;
+
+            // Auto-sync: if PayOS is PAID but local is still PENDING (webhook not yet received)
+            if (payosInfo.status === 'PAID' && payment.status === PaymentStatus.PENDING) {
+                const latestTransaction = payosInfo.transactions?.[payosInfo.transactions.length - 1];
+
+                await this.prisma.$transaction(async (tx) => {
+                    await tx.payment.update({
+                        where: { id: payment.id },
+                        data: {
+                            status: PaymentStatus.PAID,
+                            transactionId: latestTransaction?.reference ?? null,
+                            paidAt: latestTransaction?.transactionDateTime
+                                ? new Date(latestTransaction.transactionDateTime)
+                                : new Date(),
+                        },
+                    });
+
+                    await tx.order.update({
+                        where: { id: orderId },
+                        data: { status: OrderStatus.PROCESSED },
+                    });
+                });
+            }
+
             return {
                 orderId,
-                localStatus: payment.status,
+                localStatus: payosInfo.status === 'PAID' && payment.status === PaymentStatus.PENDING
+                    ? PaymentStatus.PAID  // return the synced status
+                    : payment.status,
                 payosStatus: payosInfo.status,
                 amount: payosInfo.amount,
                 amountPaid: payosInfo.amountPaid,
                 transactions: payosInfo.transactions,
+                synced: payosInfo.status === 'PAID' && payment.status === PaymentStatus.PENDING,
             };
         } catch (error) {
             throw new BadRequestException(`Failed to fetch PayOS status: ${error.message}`);
