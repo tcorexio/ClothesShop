@@ -29,6 +29,8 @@ import { StatisticModule } from './modules/statistic/statistic.module';
     UserModule,
     AddressModule,
     CartModule,
+    OrderModule,
+    PaymentModule,
     StatisticModule,
     S3Module,
     ConfigModule.forRoot({

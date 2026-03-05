@@ -8,4 +8,8 @@ export const ADDRESS_SERVICE = Symbol('ADDRESS_SERVICE');
 
 export const CART_SERVICE = Symbol('CART_SERVICE');
 
+export const ORDER_SERVICE = Symbol('ORDER_SERVICE');
+
+export const PAYMENT_SERVICE = Symbol('PAYMENT_SERVICE');
+
 export const STATISTIC_SERVICE = Symbol('STATISTIC_SERVICE');
