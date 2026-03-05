@@ -73,6 +73,16 @@ export class PaymentService implements IPaymentService {
                 amount: order.totalPrice,
             };
         } catch (error) {
+            // Code 231: payment link already exists on PayOS — fetch and return it instead
+            if (error?.response?.data?.code === '231' || error?.message?.includes('231')) {
+                const existing = await this.payos.paymentRequests.get(order.id) as any;
+                return {
+                    paymentUrl: existing.checkoutUrl,
+                    qrCode: existing.qrCode,
+                    orderId: order.id,
+                    amount: order.totalPrice,
+                };
+            }
             throw new BadRequestException(`Failed to create payment link: ${error.message || error}`);
         }
     }
