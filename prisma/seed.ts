@@ -4,9 +4,7 @@ import * as bcrypt from 'bcrypt';
 import 'dotenv/config';
 
 async function main() {
-    // When running locally, replace Docker hostname 'postgres' with 'localhost'
-    const dbUrl = (process.env.DATABASE_URL || '').replace('@postgres:', '@localhost:');
-    const adapter = new PrismaPg({ connectionString: dbUrl });
+    const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL || '' });
     const prisma = new PrismaClient({ adapter });
 
     console.log('Seeding database...');
