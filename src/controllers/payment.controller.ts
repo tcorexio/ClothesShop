@@ -10,7 +10,7 @@ import {
     ParseIntPipe,
 } from "@nestjs/common";
 import { Public } from "@common/decorators/public.decorator";
-import { PAYMENT_SERVICE } from "@common/constant/service.interface.constant";
+import { PaymentService } from "@services/payment/payment.service";
 import type { IPaymentService } from "@services/payment/payment.service.interface";
 import { CreatePaymentLinkDto } from "@dto/payment/create-payment-link.dto";
 import { ConfirmPaymentDto } from "@dto/payment/confirm-payment.dto";
@@ -20,7 +20,7 @@ import { FilterPaymentsDto } from "@dto/payment/filter-payments.dto";
 @Controller("payments")
 export class PaymentController {
     constructor(
-        @Inject(PAYMENT_SERVICE)
+        @Inject(PaymentService)
         private readonly paymentService: IPaymentService,
     ) { }
 
