@@ -32,6 +32,8 @@ import { PaymentModule } from '@modules/payment/payment.module';
     UserModule,
     AddressModule,
     CartModule,
+    OrderModule,
+    PaymentModule,
     StatisticModule,
     S3Module,
     CategoryModule,

@@ -8,10 +8,10 @@ import { PaymentService } from "@services/payment/payment.service";
     controllers: [PaymentController],
     providers: [
         {
-            provide: "PAYMENT_SERVICE",
+            provide: PaymentService,
             useClass: PaymentService,
         },
     ],
-    exports: ["PAYMENT_SERVICE"],
+    exports: [PaymentService],
 })
 export class PaymentModule { }

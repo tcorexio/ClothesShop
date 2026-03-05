@@ -9,6 +9,8 @@ import {
     Inject,
     ParseIntPipe,
 } from "@nestjs/common";
+import { Public } from "@common/decorators/public.decorator";
+import { PaymentService } from "@services/payment/payment.service";
 import type { IPaymentService } from "@services/payment/payment.service.interface";
 import { CreatePaymentLinkDto } from "@dto/payment/create-payment-link.dto";
 import { ConfirmPaymentDto } from "@dto/payment/confirm-payment.dto";
@@ -18,7 +20,7 @@ import { FilterPaymentsDto } from "@dto/payment/filter-payments.dto";
 @Controller("payments")
 export class PaymentController {
     constructor(
-        @Inject("PAYMENT_SERVICE")
+        @Inject(PaymentService)
         private readonly paymentService: IPaymentService,
     ) { }
 
@@ -32,6 +34,8 @@ export class PaymentController {
         return this.paymentService.createPaymentLink(dto);
     }
 
+    // PayOS calls this without a JWT token
+    @Public()
     @Post("webhook")
     handlePayOSWebhook(@Body() dto: PayOSWebhookDto) {
         return this.paymentService.handlePayOSWebhook(dto);
@@ -55,5 +59,26 @@ export class PaymentController {
     @Get("check-status/:orderId")
     checkPaymentStatus(@Param("orderId", ParseIntPipe) orderId: number) {
         return this.paymentService.checkPaymentStatus(orderId);
+    }
+
+    // PayOS redirects here after successful payment
+    @Public()
+    @Get("success")
+    paymentSuccess(@Query() query: Record<string, string>) {
+        return {
+            message: "Payment successful",
+            orderCode: query.orderCode,
+            status: query.status,
+        };
+    }
+
+    // PayOS redirects here when user cancels payment
+    @Public()
+    @Get("cancel")
+    paymentCancel(@Query() query: Record<string, string>) {
+        return {
+            message: "Payment cancelled",
+            orderCode: query.orderCode,
+        };
     }
 }
