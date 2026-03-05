@@ -66,11 +66,10 @@ export class PaymentService implements IPaymentService {
                 })),
             });
 
+            // Spread the full PayOS response so no fields are lost regardless of SDK version
             return {
-                paymentUrl: paymentLink.checkoutUrl,
-                qrCode: paymentLink.qrCode,
+                ...(paymentLink as any),
                 orderId: order.id,
-                amount: order.totalPrice,
             };
         } catch (error) {
             // Code 231: payment link already exists on PayOS — fetch and return it instead
