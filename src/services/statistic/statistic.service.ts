@@ -86,7 +86,11 @@ export class StatisticService implements IStatisticService {
 
     // Build a date range filter for createdAt, shared across all 3 methods
     private buildDateFilter(filter: StatisticFilterDto) {
-        const where: any = { isDeleted: false };
+        const where: {
+            isDeleted: boolean;
+            status?: OrderStatus;
+            createdAt?: { gte?: Date; lte?: Date };
+        } = { isDeleted: false };
 
         if (filter.fromDate || filter.toDate) {
             where.createdAt = {};
