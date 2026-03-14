@@ -1,12 +1,12 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { NotFoundException, BadRequestException } from '@nestjs/common';
-import { PaymentService } from './payment.service';
+import { PaymentService } from '@services/payment/payment.service';
 import { PrismaService } from '@services/prisma/prisma.service';
 import { PaymentStatus, PaymentMethod, OrderStatus } from 'generated/prisma/enums';
 
 // Stop Jest from loading the real PrismaService (avoids the Prisma ESM + DB connection)
 jest.mock('@services/prisma/prisma.service', () => ({
-    PrismaService: class MockPrismaService {},
+    PrismaService: class MockPrismaService { },
 }));
 
 // Prevent the PayOS SDK from throwing when env vars are missing in test environment

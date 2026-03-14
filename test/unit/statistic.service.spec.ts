@@ -1,11 +1,11 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { StatisticService } from './statistic.service';
+import { StatisticService } from '@services/statistic/statistic.service';
 import { PrismaService } from '@services/prisma/prisma.service';
 import { OrderStatus } from 'generated/prisma/enums';
 
 // Stop Jest from loading the real PrismaService (avoids the Prisma ESM + DB connection)
 jest.mock('@services/prisma/prisma.service', () => ({
-    PrismaService: class MockPrismaService {},
+    PrismaService: class MockPrismaService { },
 }));
 
 describe('StatisticService', () => {

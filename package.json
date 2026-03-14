@@ -92,24 +92,28 @@
       "json",
       "ts"
     ],
-    "rootDir": "src",
+    "rootDir": ".",
+    "roots": [
+      "<rootDir>/src",
+      "<rootDir>/test/unit"
+    ],
     "testRegex": ".*\\.spec\\.ts$",
     "transform": {
       "^.+\\.(t|j)s$": "ts-jest"
     },
     "moduleNameMapper": {
-      "^@modules/(.*)$": "<rootDir>/modules/$1",
-      "^@controllers/(.*)$": "<rootDir>/controllers/$1",
-      "^@services/(.*)$": "<rootDir>/services/$1",
-      "^@common/(.*)$": "<rootDir>/common/$1",
-      "^@models/(.*)$": "<rootDir>/lib/models/$1",
-      "^@dto/(.*)$": "<rootDir>/lib/dto/$1",
-      "^generated/(.*)$": "<rootDir>/../generated/$1"
+      "^@modules/(.*)$": "<rootDir>/src/modules/$1",
+      "^@controllers/(.*)$": "<rootDir>/src/controllers/$1",
+      "^@services/(.*)$": "<rootDir>/src/services/$1",
+      "^@common/(.*)$": "<rootDir>/src/common/$1",
+      "^@models/(.*)$": "<rootDir>/src/lib/models/$1",
+      "^@dto/(.*)$": "<rootDir>/src/lib/dto/$1",
+      "^generated/(.*)$": "<rootDir>/generated/$1"
     },
     "collectCoverageFrom": [
-      "**/*.(t|j)s"
+      "src/**/*.(t|j)s"
     ],
-    "coverageDirectory": "../coverage",
+    "coverageDirectory": "coverage",
     "testEnvironment": "node"
   }
 }
