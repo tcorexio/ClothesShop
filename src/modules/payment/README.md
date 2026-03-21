@@ -1,965 +1,460 @@
-# 📱 PAYMENT MODULE - HƯỚNG DẪN TOÀN DIỆN
+# Module Thanh Toán (Payment)
 
-## 📋 Mục lục
-- [1. Kiến trúc tổng quan](#1-kiến-trúc-tổng-quan)
-- [2. Database Schema](#2-database-schema)
-- [3. PayOS SDK Integration](#3-payos-sdk-integration)
-- [4. Phân tích từng Method](#4-phân-tích-từng-method)
-- [5. State Machine](#5-state-machine)
-- [6. Security & Best Practices](#6-security--best-practices)
-- [7. Flow hoàn chỉnh](#7-flow-hoàn-chỉnh)
-
----
-
-## 1. Kiến trúc tổng quan
-
-### Layered Architecture Pattern
-```
-┌─────────────────────────────────────┐
-│  Controller Layer                   │  HTTP Requests/Responses
-│  (payment.controller.ts)            │  Routing & Validation
-└──────────────┬──────────────────────┘
-               ↓
-┌─────────────────────────────────────┐
-│  Service Layer                      │  Business Logic
-│  (payment.service.ts)               │  PayOS Integration
-└──────────────┬──────────────────────┘
-               ↓
-┌─────────────────────────────────────┐
-│  Data Layer                         │  Database Operations
-│  (Prisma ORM)                       │  SQL Queries
-└──────────────┬──────────────────────┘
-               ↓
-┌─────────────────────────────────────┐
-│  PostgreSQL Database                │  Data Storage
-└─────────────────────────────────────┘
-
-External: PayOS SDK ← Third-party Payment Gateway
-```
-
-### Tại sao phân tách như vậy?
-
-| Layer | Trách nhiệm | Lợi ích |
-|-------|-------------|---------|
-| **Controller** | Xử lý HTTP (routing, validation) | Dễ test endpoint, không trộn business logic |
-| **Service** | Chứa business logic | Tái sử dụng ở nhiều nơi, dễ maintain |
-| **Interface** | Định nghĩa contract | Dễ mock khi test, dễ thay implementation |
-| **Prisma** | Data access | Type-safe, auto-migration, query builder |
+## Mục lục
+- [1. Tổng quan](#1-tổng-quan)
+- [2. Luồng thanh toán](#2-luồng-thanh-toán)
+- [3. Trạng thái thanh toán](#3-trạng-thái-thanh-toán)
+- [4. Giải thích từng API](#4-giải-thích-từng-api)
+- [5. Bảo mật](#5-bảo-mật)
+- [6. Xử lý lỗi thường gặp](#6-xử-lý-lỗi-thường-gặp)
 
 ---
 
-## 2. Database Schema
+## 1. Tổng quan
 
-### Model Payment
+Module này xử lý toàn bộ nghiệp vụ thanh toán cho shop:
+- Thanh toán qua **PayOS** (chuyển khoản ngân hàng, quét QR)
+- Thanh toán **COD** (tiền mặt khi nhận hàng)
+- Xác nhận thủ công từ admin
+- Đối soát trạng thái với PayOS khi webhook bị miss
 
-```prisma
-model Payment {
-  id            Int           @id @default(autoincrement())
-  orderId       Int           @unique @map("order_id")      // 1-1 với Order
-  method        PaymentMethod                               // COD / BANK_TRANSFER
-  status        PaymentStatus @default(PENDING)             // State machine
-  amount        Decimal       @db.Decimal(10, 2)           // Số tiền chính xác
-  transactionId String?       @map("transaction_id")       // Mã GD từ bank/PayOS
-  paidAt        DateTime?     @map("paid_at")              // Thời điểm thanh toán
-  
-  createdAt DateTime @default(now())
-  isDeleted Boolean @default(false)                        // Soft delete
-  
-  order Order @relation(...)                               // Quan hệ với Order
-}
-```
-
-### Giải thích thiết kế
-
-#### 🔑 `orderId` là UNIQUE
-- **Lý do**: Mỗi order chỉ có **1 payment record duy nhất**
-- **Quan hệ**: 1-1 relationship ngăn duplicate payment
-- **Soft delete**: Khi order bị cancel → payment vẫn giữ history (audit trail)
-
-#### 💰 `Decimal(10, 2)` cho amount
-- ❌ Không dùng `INT`: Có phần lẻ (đồng)
-- ❌ Không dùng `FLOAT`: **Rounding error** (1000.00 → 999.99999)
-- ✅ Dùng `Decimal`: Đảm bảo **chính xác tuyệt đối** cho tiền
-
-**Ví dụ float error:**
-```javascript
-0.1 + 0.2 = 0.30000000000000004 ❌
-// Decimal đảm bảo: 0.1 + 0.2 = 0.3 ✅
-```
-
-#### 🎫 `transactionId` nullable
-- COD payment không có mã giao dịch ngân hàng
-- Chỉ có khi BANK_TRANSFER và đã thanh toán thành công
-
-#### 🗑️ Soft delete (`isDeleted`)
-- **Không xóa record payment** vì cần audit trail
-- Pháp luật yêu cầu giữ lịch sử giao dịch tài chính
-- Dễ recovery nếu xóa nhầm
-
----
-
-## 3. PayOS SDK Integration
-
-### PayOS là gì?
-
-**Payment Gateway** - cổng thanh toán trung gian:
-```
-Shop (bạn) ←→ PayOS ←→ Ngân hàng (VCB, TCB, MB...)
-```
-
-### Workflow thanh toán
+### Kiến trúc
 
 ```
-1. User → Click "Thanh toán"
-           ↓
-2. Shop tạo payment link từ PayOS SDK
-           ↓
-3. User scan QR / click link → Chuyển đến trang PayOS
-           ↓
-4. User nhập thông tin thẻ / chuyển khoản → PayOS xử lý
-           ↓
-5. PayOS gọi webhook về server shop (xác nhận thanh toán)
-           ↓
-6. Shop cập nhật DB → Hoàn tất đơn hàng
+Client → PaymentController → PaymentService → Prisma (DB)
+                                           ↕
+                                      PayOS SDK
 ```
 
-### Khởi tạo PayOS
+### Khởi tạo PayOS SDK
 
 ```typescript
+// Clothesshop/src/services/payment/payment.service.ts
+
 constructor(private readonly prisma: PrismaService) {
     this.payos = new PayOS({
-        clientId: process.env.PAYOS_CLIENT_ID,
-        apiKey: process.env.PAYOS_API_KEY,
-        checksumKey: process.env.PAYOS_CHECKSUM_KEY,
+        clientId:    process.env.PAYOS_CLIENT_ID    || '',
+        apiKey:      process.env.PAYOS_API_KEY       || '',
+        checksumKey: process.env.PAYOS_CHECKSUM_KEY  || '',
     });
-    this.PAYOS_RETURN_URL = process.env.PAYOS_RETURN_URL || '...';
-    this.PAYOS_CANCEL_URL = process.env.PAYOS_CANCEL_URL || '...';
+    this.returnUrl = process.env.PAYOS_RETURN_URL || 'http://localhost:3000/payments/success';
+    this.cancelUrl = process.env.PAYOS_CANCEL_URL || 'http://localhost:3000/payments/cancel';
 }
 ```
 
-#### Tại sao khởi tạo trong constructor?
-
-| Lý do | Giải thích |
-|-------|-----------|
-| **Singleton pattern** | Khởi tạo 1 lần, dùng suốt app lifecycle |
-| **Tránh overhead** | Không phải tạo connection mới mỗi lần request |
-| **Environment Variables** | Bảo mật - không hardcode key vào code |
-| **Readonly properties** | Không thể thay đổi sau khi khởi tạo (immutable) |
+**Tại sao khởi tạo trong constructor?**
+- Khởi tạo 1 lần duy nhất, dùng được trong toàn bộ vòng đời ứng dụng (Singleton)
+- Không tạo lại connection mỗi lần có request → tiết kiệm tài nguyên
+- Không hardcode key vào code → bảo mật, dễ thay đổi theo môi trường
 
 ---
 
-## 4. Phân tích từng Method
+## 2. Luồng thanh toán
 
-### A. `createPaymentLink()` - Tạo link thanh toán
+### 2.1 Thanh toán qua PayOS (BANK_TRANSFER)
 
-#### Flow
+```
+1. POST /orders          → Tạo đơn hàng + Payment (PENDING)
+2. POST /payments/create-link → Lấy checkoutUrl từ PayOS
+3. Redirect user → scan QR / chuyển khoản trên trang PayOS
+4. POST /payments/webhook → PayOS callback → server xác nhận → cập nhật DB
+5. GET  /payments/check-status/:orderId → Kiểm tra (nếu webhook miss → auto sync)
+```
+
+### 2.2 Thanh toán COD
+
+```
+1. Tạo đơn hàng với method = COD
+2. Shipper giao hàng, thu tiền mặt
+3. PATCH /payments/confirm → Admin xác nhận → Payment PAID, Order PROCESSED
+```
+
+### 2.3 Hủy thanh toán
+
+```
+PATCH /payments/:id/cancel
+  → Nếu BANK_TRANSFER: gọi PayOS hủy link (lỗi thì bỏ qua)
+  → Payment → FAILED
+```
+
+---
+
+## 3. Trạng thái thanh toán
+
+```
+PENDING  ──[webhook / confirm]──→  PAID    (terminal)
+PENDING  ──[hủy đơn]───────────→  FAILED  (terminal)
+```
+
+`PAID` và `FAILED` là trạng thái cuối — không thể hoàn tác. Nếu cần hoàn tiền, tạo bản ghi refund riêng.
+
+---
+
+## 4. Giải thích từng API
+
+### `POST /payments/create-link` — Tạo link thanh toán PayOS
 
 ```typescript
+// Clothesshop/src/services/payment/payment.service.ts
+
 async createPaymentLink(dto: CreatePaymentLinkDto) {
-    // 1️⃣ Fetch order với payment và items
     const order = await this.prisma.order.findFirst({
         where: { id: dto.orderId },
         include: { payment: true, items: true },
     });
-```
 
-**Tại sao include payment + items?**
-- `payment`: Kiểm tra method, status
-- `items`: Cần gửi danh sách sản phẩm cho PayOS (bắt buộc)
+    if (!order)                   throw new NotFoundException('Order not found');
+    if (!order.payment)           throw new BadRequestException('Payment record not found for this order');
+    if (order.payment.method !== PaymentMethod.BANK_TRANSFER)
+                                  throw new BadRequestException('Only BANK_TRANSFER orders can use PayOS');
+    if (order.payment.status !== PaymentStatus.PENDING)
+                                  throw new BadRequestException('Payment has already been processed');
 
-```typescript
-    // 2️⃣ Validation layers
-    if (!order) throw new NotFoundException();
-    if (!order.payment) throw new BadRequestException();
-    if (order.payment.method !== "BANK_TRANSFER") 
-        throw new BadRequestException("Must be BANK_TRANSFER");
-    if (order.payment.status !== PaymentStatus.PENDING) 
-        throw new BadRequestException("Already processed");
-```
+    // Tính amount từ items, không dùng order.totalPrice
+    const amount = order.items.reduce(
+        (sum, item) => sum + Number(item.price) * item.quantity, 0
+    );
 
-**Tại sao validation nhiều bước?**
-- ⚡ **Fail fast**: Dừng sớm nếu điều kiện không đúng
-- 🔒 **Security**: Ngăn tạo link duplicate hoặc cho COD payment
-- 📝 **UX**: Message lỗi rõ ràng từng case
+    const paymentLink = await this.payos.paymentRequests.create({
+        orderCode:   order.id,
+        amount,
+        description: `DH${order.id}`,
+        returnUrl:   this.returnUrl,
+        cancelUrl:   this.cancelUrl,
+        items: order.items.map((item) => ({
+            name:     item.productName,
+            quantity: item.quantity,
+            price:    Number(item.price),
+        })),
+    }) as any;
 
-```typescript
-    // 3️⃣ Transform order items → PayOS format
-    const items = order.items.map((item) => ({
-        name: item.productName,
-        quantity: item.quantity,
-        price: Number(item.price),  // Decimal → Number
-    }));
-```
+    const checkoutUrl = paymentLink.checkoutUrl ?? paymentLink.data?.checkoutUrl ?? null;
 
-**Tại sao Map items?**
-- DB schema ≠ PayOS API schema
-- PayOS yêu cầu format: `{name, quantity, price}`
-- `Number(price)`: Convert Prisma Decimal → JS number
+    // Nếu checkoutUrl rỗng → link đã tồn tại trên PayOS trước đó → fetch lại
+    if (!checkoutUrl) {
+        const existing = await this.payos.paymentRequests.get(order.id) as any;
+        return { ...existing, checkoutUrl: existing.checkoutUrl ?? null, orderId: order.id };
+    }
 
-```typescript
-    // 4️⃣ Call PayOS SDK
-    const paymentData = {
-        orderCode: order.id,          // Unique identifier
-        amount: Number(order.totalPrice),
-        description: `DH${order.id}`, // "DH1", "DH2"...
-        returnUrl: this.PAYOS_RETURN_URL,  // Success redirect
-        cancelUrl: this.PAYOS_CANCEL_URL,  // Cancel redirect
-        items,
-    };
-
-    const paymentLink = await this.payos.paymentRequests.create(paymentData);
-```
-
-**Return URLs:**
-- `returnUrl`: User thanh toán xong → redirect về đây (success page)
-- `cancelUrl`: User hủy → redirect về đây (retry hoặc đổi phương thức)
-
-**Response:**
-```json
-{
-  "paymentUrl": "https://pay.payos.vn/web/...",
-  "qrCode": "00020101021238600010A000000727...",
-  "orderId": 1,
-  "amount": "650000"
+    return { ...paymentLink, checkoutUrl, orderId: order.id };
 }
 ```
 
+**Tại sao tính `amount` từ `items` thay vì `order.totalPrice`?**
+
+PayOS yêu cầu `amount` khớp chính xác với tổng `items[].price × quantity`. Nếu dùng `order.totalPrice` (lưu riêng trong DB) mà có sai lệch làm tròn thì PayOS sẽ từ chối. Tính trực tiếp từ items đảm bảo 2 phía luôn nhất quán.
+
+**Tại sao `include: { payment, items }`?**
+- `payment`: Cần kiểm tra `method` và `status` trước khi gọi PayOS
+- `items`: Phải gửi danh sách sản phẩm lên PayOS (bắt buộc theo API của PayOS)
+
+**Tại sao fallback khi không có `checkoutUrl`?**
+
+Một số version của PayOS SDK trả về link qua `data.checkoutUrl` thay vì `checkoutUrl` trực tiếp. Nếu vẫn rỗng → link đã được tạo trước đó, ta fetch lại thay vì tạo thêm (tránh duplicate).
+
 ---
 
-### B. `handlePayOSWebhook()` - Xử lý callback từ PayOS
-
-#### Webhook là gì?
-- PayOS **chủ động gọi** API của bạn khi có sự kiện
-- **Server-to-server** communication (không qua browser)
-- User thanh toán xong → PayOS gọi webhook → bạn cập nhật DB
-
-#### Flow xử lý
+### `POST /payments/webhook` — Nhận callback từ PayOS
 
 ```typescript
+// Clothesshop/src/services/payment/payment.service.ts
+
 async handlePayOSWebhook(webhookBody: PayOSWebhookDto) {
-    // 1️⃣ VERIFY SIGNATURE - CRITICAL SECURITY!
+    // 1. Xác thực chữ ký HMAC — bước quan trọng nhất
     let webhookData;
     try {
         webhookData = await this.payos.webhooks.verify(webhookBody);
     } catch (error) {
-        throw new BadRequestException(`Invalid signature`);
+        throw new BadRequestException(`Invalid webhook signature: ${error.message || error}`);
     }
-```
 
-**🔐 Tại sao phải verify signature?**
-
-| Vấn đề | Giải pháp |
-|--------|-----------|
-| Hacker giả mạo PayOS | Verify signature → reject |
-| MITM attack | HMAC-SHA256 signature |
-| Replay attack | Timestamp validation |
-
-**Cách hoạt động:**
-```
-PayOS sign data = HMAC(data, checksumKey)
-     ↓
-Shop verify     = HMAC(data, checksumKey)
-     ↓
-Compare → Match ✅ / Not match ❌
-```
-
-```typescript
-    // 2️⃣ Check payment success code
-    if (webhookBody.code !== "00") {
-        throw new BadRequestException(`Failed: ${webhookBody.code}`);
+    // 2. Chỉ xử lý khi thanh toán thành công (code = "00")
+    if (webhookBody.code !== '00') {
+        return { message: 'Webhook received but payment was not successful' };
     }
-```
 
-**Code meanings:**
-- `"00"` = Success ✅
-- `"01"` = Failed ❌
-- `"02"` = Cancelled 🚫
-
-```typescript
-    // 3️⃣ Fetch payment record
     const payment = await this.prisma.payment.findFirst({
-        where: {
-            orderId: webhookData.orderCode,
-            isDeleted: false,
-        },
+        where: { orderId: webhookData.orderCode, isDeleted: false },
         include: { order: true },
     });
-```
 
-```typescript
-    // 4️⃣ Amount verification
+    if (!payment) throw new NotFoundException('Payment not found');
+
+    // 3. Kiểm tra số tiền khớp với DB
     if (Number(payment.amount) !== webhookData.amount) {
-        throw new BadRequestException("Amount mismatch");
+        throw new BadRequestException('Payment amount does not match');
     }
-```
 
-**🛡️ Tại sao verify amount?**
-- **Double-check fraud**: Frontend có thể bị hack, đổi amount
-- **DB là source of truth**: So sánh webhook amount vs DB amount
-- **Prevent overpayment/underpayment**
-
-```typescript
-    // 5️⃣ Idempotency check
-    if (payment.status == PaymentStatus.PAID) {
-        return { message: "Payment already processed" }
+    // 4. Idempotency: PayOS có thể gọi lại nhiều lần do network retry
+    if (payment.status === PaymentStatus.PAID) {
+        return { message: 'Payment already processed' };
     }
-```
 
-**⚙️ Idempotency là gì?**
-- PayOS có thể gọi webhook **nhiều lần** (network retry)
-- **Không được xử lý payment 2 lần**
-- Kiểm tra status trước → nếu đã PAID → return early
-
-```typescript
-    // 6️⃣ Transaction - Update payment và order
+    // 5. Cập nhật payment và order trong 1 transaction
     await this.prisma.$transaction(async (tx) => {
         await tx.payment.update({
             where: { id: payment.id },
             data: {
-                status: PaymentStatus.PAID,
+                status:        PaymentStatus.PAID,
                 transactionId: webhookData.reference,
-                paidAt: new Date(webhookData.transactionDateTime),
+                paidAt:        new Date(webhookData.transactionDateTime),
             },
         });
-
         await tx.order.update({
             where: { id: payment.orderId },
-            data: { status: OrderStatus.PROCESSED },
+            data:  { status: OrderStatus.PROCESSED },
         });
     });
+
+    return { message: 'Payment processed successfully', orderId: payment.orderId };
+}
 ```
 
-**🔄 Tại sao dùng transaction?**
+**Tại sao verify chữ ký trước tiên?**
 
-| Scenario | Không dùng TX | Dùng TX |
-|----------|---------------|---------|
-| Update payment thành công, order fail | Payment PAID, Order PENDING ❌ | Rollback cả 2 ✅ |
-| Update order thành công, payment fail | Order PROCESSED, Payment PENDING ❌ | Rollback cả 2 ✅ |
-| Cả 2 thành công | OK ✅ | OK ✅ |
+Webhook endpoint là `@Public()` — không cần JWT. Bất kỳ ai cũng có thể gửi request đến đây. Nếu không verify HMAC signature, hacker có thể giả mạo PayOS để xác nhận thanh toán mà không cần trả tiền.
 
-**ACID properties:**
-- **Atomicity**: All or nothing
-- **Consistency**: Data integrity maintained
-- **Isolation**: Concurrent transactions don't interfere
-- **Durability**: Changes are permanent
+**Tại sao trả về message (không throw) khi `code ≠ "00"`?**
+
+PayOS gọi webhook cho cả các sự kiện thất bại / bị hủy. Trả về 200 OK để PayOS không retry. Throw exception sẽ khiến PayOS hiểu là server lỗi và gọi lại nhiều lần.
+
+**Tại sao kiểm tra `payment.amount`?**
+
+Số tiền trong DB là source of truth. Nếu có sai lệch (do lỗi tính toán hoặc cố ý thay đổi), phải từ chối ngay thay vì xác nhận thanh toán sai số tiền.
+
+**Tại sao dùng `$transaction`?**
+
+Nếu cập nhật `payment` thành công nhưng cập nhật `order` bị lỗi (hoặc ngược lại), dữ liệu sẽ không nhất quán. `$transaction` đảm bảo cả hai cùng thành công hoặc cùng rollback.
 
 ---
 
-### C. `confirmPayment()` - Xác nhận thủ công (COD)
+### `PATCH /payments/confirm` — Xác nhận thủ công (COD / Admin)
 
 ```typescript
+// Clothesshop/src/services/payment/payment.service.ts
+
 async confirmPayment(dto: ConfirmPaymentDto) {
-    const payment = await this.prisma.payment.findUnique({
-        where: { id: dto.paymentId },
-        include: { order: true }
+    const payment = await this.prisma.payment.findFirst({
+        where: { id: dto.paymentId, isDeleted: false },
+        include: { order: true },
     });
 
-    if (payment.status == PaymentStatus.PAID) {
-        throw new BadRequestException("Already confirmed");
-    }
+    if (!payment) throw new NotFoundException('Payment not found');
+    if (payment.status === PaymentStatus.PAID)
+        throw new BadRequestException('Payment has already been confirmed');
 
     await this.prisma.$transaction(async (tx) => {
         await tx.payment.update({
             where: { id: payment.id },
             data: {
-                status: PaymentStatus.PAID,
+                status:        PaymentStatus.PAID,
                 transactionId: dto.transactionId,
-                paidAt: new Date(),
+                paidAt:        new Date(),
             },
         });
 
-        if (payment.order.status == OrderStatus.PENDING) {
+        // Chỉ cập nhật order nếu vẫn đang PENDING
+        if (payment.order.status === OrderStatus.PENDING) {
             await tx.order.update({
                 where: { id: payment.orderId },
-                data: { status: OrderStatus.PROCESSED },
+                data:  { status: OrderStatus.PROCESSED },
             });
         }
+    });
+
+    return this.prisma.payment.findUnique({
+        where: { id: payment.id },
+        include: { order: true },
     });
 }
 ```
 
-#### Use cases:
-1. 📦 **COD**: Shipper giao hàng → nhận tiền mặt → admin confirm
-2. 🏦 **Manual transfer**: Chuyển khoản trực tiếp → admin check rồi confirm
-3. 💵 **Cash payment**: Khách đến shop trả tiền mặt → staff confirm
+**Tại sao kiểm tra `order.status === PENDING` trước khi cập nhật order?**
 
-**Tại sao cần method này?**
-- COD không có webhook tự động
-- Cần human verification
-- Admin có quyền confirm manual
+Order có thể đã được admin chuyển sang `PROCESSED` hoặc `SHIPPED` theo cách khác trước đó. Không nên tự ý lùi trạng thái của order về; chỉ cập nhật khi order thực sự vẫn còn `PENDING`.
 
 ---
 
-### D. `cancelPayment()` - Hủy thanh toán
+### `PATCH /payments/:id/cancel` — Hủy thanh toán
 
 ```typescript
+// Clothesshop/src/services/payment/payment.service.ts
+
 async cancelPayment(paymentId: number) {
-    const payment = await this.prisma.payment.findUnique({
-        where: { id: paymentId },
+    const payment = await this.prisma.payment.findFirst({
+        where: { id: paymentId, isDeleted: false },
     });
 
-    if (payment.status == PaymentStatus.PAID) {
-        throw new BadRequestException("Cannot cancel paid payment")
-    }
+    if (!payment) throw new NotFoundException('Payment not found');
+    if (payment.status === PaymentStatus.PAID)
+        throw new BadRequestException('Cannot cancel a paid payment');
 
-    // If BANK_TRANSFER, cancel payment link on PayOS
-    if (payment.method === "BANK_TRANSFER") {
+    // Hủy link trên PayOS để tránh user thanh toán cho đơn đã hủy
+    if (payment.method === PaymentMethod.BANK_TRANSFER) {
         try {
             await this.payos.paymentRequests.cancel(payment.orderId);
         } catch {
-            // Ignore if payment link does not exist
+            // Bỏ qua lỗi: link có thể đã expired hoặc chưa được tạo
         }
     }
 
     return this.prisma.payment.update({
         where: { id: paymentId },
-        data: { status: PaymentStatus.FAILED },
+        data:  { status: PaymentStatus.FAILED },
     });
 }
 ```
 
-#### Tại sao gọi PayOS để cancel?
-- Nếu user đã mở link thanh toán → cần **vô hiệu hóa link** đó
-- Tránh user thanh toán cho order đã bị hủy
-- Invalidate QR code
+**Tại sao bỏ qua lỗi khi gọi PayOS cancel?**
 
-#### Tại sao catch error + ignore?
-- Link có thể đã expired hoặc chưa được tạo
-- PayOS có thể đã tự động cancel
-- Không quan trọng → vẫn update status trong DB
+Link PayOS có thể đã hết hạn hoặc chưa được tạo bao giờ. Dù sao, mục tiêu chính vẫn là cập nhật trạng thái trong DB — việc hủy link trên PayOS chỉ là "best effort".
 
 ---
 
-### E. `getPaymentHistory()` - Lịch sử thanh toán
+### `GET /payments/check-status/:orderId` — Kiểm tra và đồng bộ trạng thái
 
 ```typescript
+// Clothesshop/src/services/payment/payment.service.ts
+
+async checkPaymentStatus(orderId: number) {
+    const payment = await this.prisma.payment.findFirst({ where: { orderId } });
+
+    if (!payment) throw new NotFoundException('Payment not found');
+
+    // COD không có PayOS — chỉ trả về trạng thái local
+    if (payment.method === PaymentMethod.COD) {
+        return { orderId, status: payment.status, message: 'COD payment — confirm manually after delivery' };
+    }
+
+    try {
+        const payosInfo = await this.payos.paymentRequests.get(orderId) as any;
+
+        // Auto-sync: nếu PayOS là PAID nhưng DB vẫn PENDING (webhook chưa đến)
+        if (payosInfo.status === 'PAID' && payment.status === PaymentStatus.PENDING) {
+            const latestTransaction = payosInfo.transactions?.[payosInfo.transactions.length - 1];
+
+            await this.prisma.$transaction(async (tx) => {
+                await tx.payment.update({
+                    where: { id: payment.id },
+                    data: {
+                        status:        PaymentStatus.PAID,
+                        transactionId: latestTransaction?.reference ?? null,
+                        paidAt:        latestTransaction?.transactionDateTime
+                                           ? new Date(latestTransaction.transactionDateTime)
+                                           : new Date(),
+                    },
+                });
+                await tx.order.update({
+                    where: { id: orderId },
+                    data:  { status: OrderStatus.PROCESSED },
+                });
+            });
+        }
+
+        return {
+            orderId,
+            localStatus: (payosInfo.status === 'PAID' && payment.status === PaymentStatus.PENDING)
+                ? PaymentStatus.PAID  // trả về status vừa sync
+                : payment.status,
+            payosStatus:  payosInfo.status,
+            amount:       payosInfo.amount,
+            amountPaid:   payosInfo.amountPaid,
+            transactions: payosInfo.transactions,
+            synced: (payosInfo.status === 'PAID' && payment.status === PaymentStatus.PENDING),
+        };
+    } catch (error) {
+        throw new BadRequestException(`Failed to fetch PayOS status: ${error.message}`);
+    }
+}
+```
+
+**Tại sao cần auto-sync?**
+
+Webhook từ PayOS không đảm bảo 100% đến nơi (lỗi mạng, server không public khi dev ở localhost). Khi client gọi API này để kiểm tra, ta đối chiếu với PayOS và cập nhật ngay nếu phát hiện lệch. `synced: true` trong response báo cho client biết vừa có đồng bộ xảy ra.
+
+---
+
+### `GET /payments/history` — Lịch sử thanh toán
+
+```typescript
+// Clothesshop/src/services/payment/payment.service.ts
+
 async getPaymentHistory(filter: FilterPaymentsDto) {
     const { status, fromDate, toDate, page = 1, limit = 10 } = filter;
+    const skip = (page - 1) * limit;
 
-    // Dynamic query building
     const where: any = { isDeleted: false };
-    
     if (status) where.status = status;
-    
     if (fromDate || toDate) {
         where.createdAt = {};
         if (fromDate) where.createdAt.gte = new Date(fromDate);
-        if (toDate) where.createdAt.lte = new Date(toDate);
+        if (toDate)   where.createdAt.lte = new Date(toDate);
     }
 
-    const total = await this.prisma.payment.count({ where });
-
-    const payments = await this.prisma.payment.findMany({
-        where,
-        skip: (page - 1) * limit,
-        take: limit,
-        orderBy: { createdAt: "desc" },
-        include: {
-            order: {
-                include: {
-                    user: { 
-                        select: { id: true, username: true, email: true } 
-                    },
-                },
+    // Chạy count và findMany song song trong 1 round-trip
+    const [total, payments] = await this.prisma.$transaction([
+        this.prisma.payment.count({ where }),
+        this.prisma.payment.findMany({
+            where,
+            skip,
+            take:    limit,
+            orderBy: { createdAt: 'desc' },
+            include: {
+                order: { include: { user: { select: { id: true, username: true, email: true } } } },
             },
-        },
-    });
+        }),
+    ]);
 
     return {
         data: payments,
-        meta: {
-            total,
-            page,
-            limit,
-            totalPages: Math.ceil(total / limit),
-        },
+        meta: { total, page, limit, totalPages: Math.ceil(total / limit) },
     };
 }
 ```
 
-#### Dynamic Query Building
-Chỉ add filter nếu user cung cấp → flexible queries
+**Tại sao dùng `$transaction([count, findMany])`?**
 
-```typescript
-// Example queries:
-// 1. All payments
-where = { isDeleted: false }
+Chạy 2 query trong 1 transaction đảm bảo `total` và `data` đếm trên cùng snapshot dữ liệu — tránh race condition khi có thêm record giữa 2 lần query riêng lẻ. Đây là dạng "batch query", không phải transaction ghi dữ liệu.
 
-// 2. Only PAID
-where = { isDeleted: false, status: 'PAID' }
+**Tại sao chỉ `select: { id, username, email }` của user?**
 
-// 3. Date range
-where = { 
-  isDeleted: false, 
-  createdAt: { gte: '2024-01-01', lte: '2024-01-31' }
-}
-```
-
-#### Pagination Design
-
-| Parameter | Ý nghĩa | Ví dụ |
-|-----------|---------|-------|
-| `page` | Trang hiện tại | 2 |
-| `limit` | Số record/trang | 10 |
-| `skip` | Bỏ qua N records | (2-1)*10 = 10 |
-| `take` | Lấy M records | 10 |
-
-**Response format:**
-```json
-{
-  "data": [...],
-  "meta": {
-    "total": 100,
-    "page": 2,
-    "limit": 10,
-    "totalPages": 10
-  }
-}
-```
-
-Frontend dùng `meta` để render pagination UI.
+Không cần lấy toàn bộ thông tin user (password hash, địa chỉ...). Chỉ select đúng field cần thiết giúp giảm lượng dữ liệu truyền từ DB.
 
 ---
 
-### F. `checkPaymentStatus()` - Kiểm tra trạng thái
+## 5. Bảo mật
 
-```typescript
-async checkPaymentStatus(orderId: number) {
-    const payment = await this.prisma.payment.findFirst({
-        where: { orderId },
-    });
-
-    if (payment.method == "COD") {
-        return {
-            orderId,
-            status: payment.status,
-            message: "COD payment, manual confirmation required",
-        };
-    }
-
-    // Check payment status on PayOS
-    try {
-        const payosInfo = await this.payos.paymentRequests.get(orderId);
-
-        return {
-            orderId,
-            localStatus: payment.status,
-            payosStatus: payosInfo.status,
-            // Compare local vs PayOS status
-        };
-    } catch (error) {
-        return {
-            orderId,
-            status: payment.status,
-            message: "Cannot fetch PayOS status",
-        };
-    }
-}
-```
-
-#### Tại sao cần check từ PayOS?
-
-| Scenario | Local DB | PayOS | Action |
-|----------|----------|-------|--------|
-| Webhook chưa về | PENDING | PAID | Sync status |
-| Webhook failed | PENDING | PAID | Manual sync |
-| Normal case | PAID | PAID | Consistent ✅ |
-
-**Double-check với source of truth** (PayOS server) cho phép **retry manual** nếu webhook failed.
+| Điểm bảo mật | Cách thực hiện trong code |
+|---|---|
+| Xác thực webhook | `this.payos.webhooks.verify(webhookBody)` — ký HMAC với `checksumKey` |
+| Kiểm tra số tiền | `Number(payment.amount) !== webhookData.amount` → throw nếu lệch |
+| Idempotency | Kiểm tra `payment.status === PAID` trước khi xử lý |
+| Transaction | `$transaction` khi cập nhật payment + order đồng thời |
+| Soft delete | Luôn kèm `isDeleted: false` trong mọi query |
+| Env variables | Keys PayOS lấy từ `process.env`, không hardcode |
 
 ---
 
-## 5. State Machine - Payment Status Flow
+## 6. Xử lý lỗi thường gặp
 
-```
-┌─────────┐
-│ PENDING │ ← Khởi tạo payment
-└────┬────┘
-     │
-     ├──[Webhook success]──→ ┌──────┐
-     │                        │ PAID │ ← Terminal state
-     ├──[Manual confirm]───→  └──────┘
-     │
-     ├──[Cancel/Timeout]───→ ┌────────┐
-     │                        │ FAILED │ ← Terminal state
-     └────────────────────────└────────┘
-```
-
-### Rules:
-- ✅ `PENDING` → `PAID` (one-way)
-- ✅ `PENDING` → `FAILED` (one-way)
-- ❌ `PAID` → `PENDING` (không cho phép)
-- ❌ `FAILED` → `PENDING` (không cho phép)
-
-### Tại sao không cho PAID → PENDING?
-
-| Lý do | Giải thích |
-|-------|-----------|
-| **Immutability** | Tiền đã thanh toán không thể "chưa thanh toán" |
-| **Audit trail** | Giữ lịch sử là PAID forever |
-| **Refund** | Tạo record REFUND riêng, không đổi status cũ |
-| **Legal** | Tuân thủ quy định kế toán |
+| Lỗi | Nguyên nhân | Cách fix |
+|-----|-------------|----------|
+| `Invalid webhook signature` | Sai `PAYOS_CHECKSUM_KEY` | Kiểm tra lại key trong `.env` và trên dashboard PayOS |
+| `Payment already processed` | Webhook gọi lại (retry) | Bình thường — trả 200 OK để PayOS không retry thêm |
+| `Payment amount does not match` | Số tiền webhook ≠ DB | Kiểm tra logic tính `amount` khi tạo order |
+| `Only BANK_TRANSFER orders can use PayOS` | Gọi create-link với COD order | Chỉ gọi khi `method = BANK_TRANSFER` |
+| `Failed to fetch PayOS status` | Lỗi mạng hoặc order chưa có link | Kiểm tra kết nối; đảm bảo đã tạo link trước khi check |
 
 ---
 
-## 6. Security & Best Practices
+## 7. Danh sách API
 
-### 1️⃣ Environment Variables
-
-```typescript
-process.env.PAYOS_CLIENT_ID
-process.env.PAYOS_API_KEY
-process.env.PAYOS_CHECKSUM_KEY
-```
-
-**Rules:**
-- ❌ **Never commit** credentials vào Git
-- ✅ Lưu trong `.env` (gitignored)
-- ✅ Dùng `.env.example` để document
-- ✅ Rotate keys định kỳ
-
-### 2️⃣ Webhook Signature Verification
-
-```typescript
-webhookData = await this.payos.webhooks.verify(webhookBody);
-```
-
-**⚠️ CRITICAL:**
-- Không verify = hacker có thể fake payment
-- MUST verify mọi webhook request
-- Reject nếu signature invalid
-
-### 3️⃣ Transaction Atomicity
-
-```typescript
-await this.prisma.$transaction(async (tx) => {
-    // Multiple updates here
-})
-```
-
-**Khi nào dùng transaction?**
-- ✅ Update nhiều tables liên quan
-- ✅ Business logic phức tạp
-- ✅ Cần đảm bảo consistency
-- ❌ Single table update (overhead không cần thiết)
-
-### 4️⃣ Soft Delete
-
-```typescript
-where: { isDeleted: false }
-```
-
-**Benefits:**
-- 📊 Giữ history cho audit/compliance
-- 🔙 Dễ recovery nếu xóa nhầm
-- 📈 Analytics vẫn có data đầy đủ
-- ⚖️ Legal requirement cho financial data
-
-### 5️⃣ Amount Verification
-
-```typescript
-if (Number(payment.amount) !== webhookData.amount) {
-    throw new BadRequestException("Amount mismatch");
-}
-```
-
-**Ngăn chặn:**
-- 💰 Payment tampering
-- 🎭 Frontend manipulation
-- 🔓 Price modification attacks
-
-### 6️⃣ Idempotency
-
-```typescript
-if (payment.status == PaymentStatus.PAID) {
-    return { message: "Already processed" };
-}
-```
-
-**Prevent:**
-- 🔁 Duplicate processing
-- 💸 Double charging
-- 🐛 Race conditions
-
----
-
-## 7. Flow hoàn chỉnh
-
-### 🛒 E-commerce Payment Flow
-
-```
-┌─────────────────────────────────────────────────────────┐
-│ 1. CREATE ORDER                                         │
-│    POST /orders                                         │
-│    → OrderService tạo Order + Payment (PENDING)        │
-└─────────────────────────────────────────────────────────┘
-                      ↓
-┌─────────────────────────────────────────────────────────┐
-│ 2. CREATE PAYMENT LINK                                  │
-│    POST /payments/create-link                           │
-│    → PaymentService gọi PayOS SDK                       │
-│    → Trả về: paymentUrl + qrCode                        │
-└─────────────────────────────────────────────────────────┘
-                      ↓
-┌─────────────────────────────────────────────────────────┐
-│ 3. USER THANH TOÁN                                      │
-│    User scan QR / click link                            │
-│    → Chuyển đến trang PayOS                             │
-│    → Nhập thông tin thẻ / chuyển khoản                  │
-│    → PayOS xử lý với ngân hàng                          │
-└─────────────────────────────────────────────────────────┘
-                      ↓
-┌─────────────────────────────────────────────────────────┐
-│ 4. WEBHOOK CALLBACK                                     │
-│    POST /payments/webhook (từ PayOS)                    │
-│    → PaymentService verify signature                    │
-│    → Cập nhật: Payment = PAID, Order = PROCESSED       │
-└─────────────────────────────────────────────────────────┘
-                      ↓
-┌─────────────────────────────────────────────────────────┐
-│ 5. CHECK STATUS / HISTORY                               │
-│    GET /payments/check-status/:orderId                  │
-│    GET /payments/history?status=PAID                    │
-└─────────────────────────────────────────────────────────┘
-```
-
-### 🚫 Cancel Flow
-
-```
-User/Admin → PATCH /payments/:id/cancel
-           ↓
-PaymentService → Check status (không PAID)
-           ↓
-Gọi PayOS SDK → Invalidate payment link
-           ↓
-Update DB → status = FAILED
-           ↓
-Return canceled payment
-```
-
-### 💵 COD Flow
-
-```
-User → Tạo order với method = COD
-     ↓
-Payment status = PENDING (DB)
-     ↓
-Shipper giao hàng → Nhận tiền mặt
-     ↓
-Admin → PATCH /payments/confirm
-     ↓
-PaymentService → Update PAID + paidAt
-     ↓
-Order status → PROCESSED
-```
-
----
-
-## 8. API Endpoints Summary
-
-| Method | Endpoint | Description | Auth |
-|--------|----------|-------------|------|
+| Method | Endpoint | Mô tả | Auth |
+|--------|----------|-------|------|
 | `GET` | `/payments/order/:orderId` | Lấy payment theo orderId | ✅ |
-| `POST` | `/payments/create-link` | Tạo PayOS payment link | ✅ |
-| `POST` | `/payments/webhook` | Webhook từ PayOS | ❌ (verify signature) |
-| `PATCH` | `/payments/confirm` | Xác nhận COD/manual | ✅ Admin |
+| `POST` | `/payments/create-link` | Tạo PayOS checkout link | ✅ |
+| `POST` | `/payments/webhook` | Callback từ PayOS | ❌ (Public, dùng HMAC verify) |
+| `PATCH` | `/payments/confirm` | Xác nhận COD / admin | ✅ |
 | `PATCH` | `/payments/:id/cancel` | Hủy payment | ✅ |
-| `GET` | `/payments/history` | Lịch sử thanh toán | ✅ |
-| `GET` | `/payments/check-status/:orderId` | Kiểm tra status | ✅ |
-
----
-
-## 9. Error Handling
-
-### Common Errors
-
-```typescript
-// 404 Not Found
-throw new NotFoundException("Payment not found");
-
-// 400 Bad Request
-throw new BadRequestException("Payment already processed");
-throw new BadRequestException("Amount mismatch");
-throw new BadRequestException("Invalid webhook signature");
-
-// 500 Internal Server Error
-try {
-    await this.payos.paymentRequests.create(data);
-} catch (error) {
-    console.error('PayOS error:', error);
-    throw new BadRequestException(`Failed: ${error.message}`);
-}
-```
-
-### Logging Strategy
-
-```typescript
-// Constructor
-console.log('PayOS Credentials Check:', {
-    clientId: process.env.PAYOS_CLIENT_ID ? 'EXISTS' : 'MISSING',
-    apiKey: process.env.PAYOS_API_KEY ? 'EXISTS' : 'MISSING',
-});
-
-// Creating payment link
-console.log('PayOS request:', JSON.stringify(paymentData, null, 2));
-
-// Error
-console.error('PayOS error details:', error);
-```
-
-**Best practices:**
-- ✅ Log credentials check at startup
-- ✅ Log request data (sensitive data masked)
-- ✅ Log error details for debugging
-- ❌ Never log full credentials
-- ❌ Never log sensitive user data
-
----
-
-## 10. Testing
-
-### Unit Test Example
-
-```typescript
-describe('PaymentService', () => {
-    it('should create payment link', async () => {
-        const mockOrder = {
-            id: 1,
-            totalPrice: 100000,
-            items: [{...}],
-            payment: { method: 'BANK_TRANSFER', status: 'PENDING' }
-        };
-        
-        jest.spyOn(prisma.order, 'findFirst').mockResolvedValue(mockOrder);
-        jest.spyOn(payos.paymentRequests, 'create').mockResolvedValue({
-            checkoutUrl: 'https://...',
-            qrCode: '...'
-        });
-        
-        const result = await paymentService.createPaymentLink({ orderId: 1 });
-        
-        expect(result.paymentUrl).toBeDefined();
-    });
-});
-```
-
-### Integration Test Example
-
-```typescript
-describe('Payment E2E', () => {
-    it('should complete payment flow', async () => {
-        // 1. Create order
-        const order = await request(app).post('/orders').send({...});
-        
-        // 2. Create payment link
-        const link = await request(app)
-            .post('/payments/create-link')
-            .send({ orderId: order.id });
-        
-        // 3. Simulate webhook
-        const webhook = await request(app)
-            .post('/payments/webhook')
-            .send({ code: '00', ... });
-        
-        // 4. Check status
-        const payment = await request(app)
-            .get(`/payments/order/${order.id}`);
-        
-        expect(payment.status).toBe('PAID');
-    });
-});
-```
-
----
-
-## 11. Deployment Checklist
-
-### Environment Variables
-```bash
-# .env.production
-PAYOS_CLIENT_ID=your_production_client_id
-PAYOS_API_KEY=your_production_api_key
-PAYOS_CHECKSUM_KEY=your_production_checksum_key
-PAYOS_RETURN_URL=https://yourdomain.com/payment/success
-PAYOS_CANCEL_URL=https://yourdomain.com/payment/cancel
-DATABASE_URL=postgresql://user:pass@host:5432/db
-```
-
-### Pre-deployment Steps
-- ✅ Test webhook endpoint với PayOS sandbox
-- ✅ Verify SSL certificate (webhook endpoint phải HTTPS)
-- ✅ Setup monitoring/logging (Sentry, LogRocket)
-- ✅ Test transaction rollback
-- ✅ Load testing payment flow
-- ✅ Backup database
-- ✅ Document rollback procedure
-
-### Monitoring
-```typescript
-// Add metrics
-const paymentDuration = Date.now() - startTime;
-logger.info('Payment processed', {
-    orderId,
-    amount,
-    duration: paymentDuration,
-    status: 'success'
-});
-```
-
----
-
-## 12. Troubleshooting
-
-### Common Issues
-
-#### ❌ "Invalid webhook signature"
-**Cause:** Sai `checksumKey` hoặc webhook data bị modify
-**Fix:** 
-- Kiểm tra `PAYOS_CHECKSUM_KEY` trong .env
-- Verify webhook URL trong PayOS dashboard
-
-#### ❌ "Payment already processed"
-**Cause:** Webhook retry hoặc duplicate request
-**Fix:** 
-- Đây là expected behavior (idempotency)
-- Return 200 OK để PayOS không retry
-
-#### ❌ "Amount mismatch"
-**Cause:** Frontend bị hack hoặc price thay đổi
-**Fix:**
-- Validate amount ở backend trước khi tạo order
-- Lock price khi tạo payment
-
-#### ❌ "Cannot fetch PayOS status"
-**Cause:** Network issue hoặc payment không tồn tại trên PayOS
-**Fix:**
-- Check network connectivity
-- Verify orderCode/paymentLinkId
-
----
-
-## 📚 References
-
-- [PayOS Documentation](https://payos.vn/docs)
-- [NestJS Documentation](https://docs.nestjs.com)
-- [Prisma Documentation](https://www.prisma.io/docs)
-- [Payment Gateway Best Practices](https://stripe.com/docs/security/guide)
-
----
-
-## 🤝 Contributing
-
-Nếu cần thêm tính năng:
-1. Refund payment
-2. Partial payment
-3. Installment payment
-4. Multiple payment methods
-5. Payment analytics dashboard
-
-Liên hệ team để discuss implementation.
-
----
-
-**Last Updated:** February 21, 2026
-**Version:** 1.0.0
-**Maintainer:** Development Team
+| `GET` | `/payments/history` | Lịch sử thanh toán (có phân trang) | ✅ |
+| `GET` | `/payments/check-status/:orderId` | Kiểm tra và đồng bộ trạng thái | ✅ |
