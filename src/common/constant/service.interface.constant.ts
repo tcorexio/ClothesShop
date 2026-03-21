@@ -16,3 +16,5 @@ export const PRODUCT_VARIANT_SERVICE = Symbol('PRODUCT_VARIANT_SERVICE');
 
 export const STATISTIC_SERVICE = Symbol('STATISTIC_SERVICE');
 
+export const REVIEW_SERVICE = Symbol('REVIEW_SERVICE');
+

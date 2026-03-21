@@ -4,7 +4,8 @@ import { Roles } from "@common/decorators/roles.decorator";
 import { PageFilterDto } from "@dto/page/page-filter.dto";
 import { CreateProductRequest } from "@dto/product/create-product.request";
 import { ProductFilterRequest } from "@dto/product/product-filter.request";
-import { Body, Controller, Delete, Get, Inject, Param, Patch, Post, Query } from "@nestjs/common";
+import { UpdateProductRequest } from "@dto/product/update-product.request";
+import { Body, Controller, Delete, Get, Inject, Param, ParseIntPipe, Patch, Post, Query } from "@nestjs/common";
 import type { ICategoryService } from "@services/category/category.service.interface";
 import type { IProductService } from "@services/product/product.service.interface";
 import { ROLE } from "generated/prisma/enums";
@@ -28,7 +29,7 @@ export class ProductController {
 
     @Patch(':id')
     @Roles(ROLE.ADMIN)
-    async update(@Body() dto: CreateProductRequest, @Param('id') id: number) {
+    async update(@Body() dto: UpdateProductRequest, @Param('id') id: number) {
         const product = await this.productService.Update(id, dto);
         return {
             message: 'Product updated successfully',
@@ -63,16 +64,6 @@ export class ProductController {
         return {
             message: 'Products retrieved successfully',
             data: products,
-        };
-    }
-
-    @Get(':id')
-    @Public()
-    async getById(@Param('id') id: number) {
-        const product = await this.productService.GetById(id);
-        return {
-            message: 'Product retrieved successfully',
-            data: product,
         };
     }
 
@@ -183,6 +174,16 @@ export class ProductController {
         return {
             message: 'Total products in category counted successfully',
             data: totalProducts,
+        };
+    }
+
+    @Get(':id')
+    @Public()
+    async getById(@Param('id', ParseIntPipe) id: number) {
+        const product = await this.productService.GetById(id);
+        return {
+            message: 'Product retrieved successfully',
+            data: product,
         };
     }
     

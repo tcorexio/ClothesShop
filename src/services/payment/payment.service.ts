@@ -5,54 +5,38 @@ import { CreatePaymentLinkDto } from "@dto/payment/create-payment-link.dto";
 import { ConfirmPaymentDto } from "@dto/payment/confirm-payment.dto";
 import { PayOSWebhookDto } from "@dto/payment/payos-webhook.dto";
 import { FilterPaymentsDto } from "@dto/payment/filter-payments.dto";
-import { PaymentStatus, OrderStatus } from "generated/prisma/enums";
+import { PaymentStatus, OrderStatus, PaymentMethod } from "generated/prisma/enums";
 import { PayOS } from "@payos/node";
 
 @Injectable()
 export class PaymentService implements IPaymentService {
     private readonly payos: PayOS;
-    private readonly PAYOS_RETURN_URL: string;
-    private readonly PAYOS_CANCEL_URL: string;
+    private readonly returnUrl: string;
+    private readonly cancelUrl: string;
 
     constructor(private readonly prisma: PrismaService) {
-        console.log('PayOS Credentials Check:');
-        console.log('- CLIENT_ID:', process.env.PAYOS_CLIENT_ID ? 'EXISTS' : 'MISSING');
-        console.log('- API_KEY:', process.env.PAYOS_API_KEY ? 'EXISTS' : 'MISSING');
-        console.log('- CHECKSUM_KEY:', process.env.PAYOS_CHECKSUM_KEY ? 'EXISTS' : 'MISSING');
-
         this.payos = new PayOS({
             clientId: process.env.PAYOS_CLIENT_ID || '',
             apiKey: process.env.PAYOS_API_KEY || '',
             checksumKey: process.env.PAYOS_CHECKSUM_KEY || '',
         });
-        this.PAYOS_RETURN_URL = process.env.PAYOS_RETURN_URL || 'http://localhost:3000/payment/success';
-        this.PAYOS_CANCEL_URL = process.env.PAYOS_CANCEL_URL || 'http://localhost:3000/payment/cancel';
+        this.returnUrl = process.env.PAYOS_RETURN_URL || 'http://localhost:3000/payments/success';
+        this.cancelUrl = process.env.PAYOS_CANCEL_URL || 'http://localhost:3000/payments/cancel';
     }
 
     async getPaymentByOrderId(orderId: number) {
         const payment = await this.prisma.payment.findFirst({
-            where: {
-                orderId,
-                isDeleted: false,
-            },
+            where: { orderId, isDeleted: false },
             include: {
                 order: {
                     include: {
-                        user: {
-                            select: {
-                                id: true,
-                                username: true,
-                                email: true,
-                            },
-                        },
+                        user: { select: { id: true, username: true, email: true } },
                     },
                 },
             },
         });
 
-        if (!payment) {
-            throw new NotFoundException('Payment not found');
-        }
+        if (!payment) throw new NotFoundException('Payment not found');
 
         return payment;
     }
@@ -60,57 +44,55 @@ export class PaymentService implements IPaymentService {
     async createPaymentLink(dto: CreatePaymentLinkDto) {
         const order = await this.prisma.order.findFirst({
             where: { id: dto.orderId },
-            include: {
-                payment: true,
-                items: true,
-            },
+            include: { payment: true, items: true },
         });
 
-        if (!order) {
-            throw new NotFoundException("Order not found");
-        }
+        if (!order) throw new NotFoundException("Order not found");
+        if (!order.payment) throw new BadRequestException("Payment record not found for this order");
+        if (order.payment.method !== PaymentMethod.BANK_TRANSFER) throw new BadRequestException("Only BANK_TRANSFER orders can use PayOS");
+        if (order.payment.status !== PaymentStatus.PENDING) throw new BadRequestException("Payment has already been processed");
 
-        if (!order.payment) {
-            throw new BadRequestException("Payment not found for this order");
-        }
-
-        if (order.payment.method !== "BANK_TRANSFER") {
-            throw new BadRequestException("Payment method must be BANK_TRANSFER");
-        }
-
-        if (order.payment.status !== PaymentStatus.PENDING) {
-            throw new BadRequestException("Payment has already been processed");
-        }
+        // Calculate amount directly from items to ensure it matches PayOS (price * quantity)
+        const amount = order.items.reduce((sum, item) => sum + Number(item.price) * item.quantity, 0);
 
         try {
-            const items = order.items.map((item) => ({
-                name: item.productName,
-                quantity: item.quantity,
-                price: Number(item.price),
-            }));
-
-            const paymentData = {
+            const paymentLink = await this.payos.paymentRequests.create({
                 orderCode: order.id,
-                amount: Number(order.totalPrice),
+                amount,
                 description: `DH${order.id}`,
-                returnUrl: this.PAYOS_RETURN_URL,
-                cancelUrl: this.PAYOS_CANCEL_URL,
-                items,
-            };
+                returnUrl: this.returnUrl,
+                cancelUrl: this.cancelUrl,
+                items: order.items.map((item) => ({
+                    name: item.productName,
+                    quantity: item.quantity,
+                    price: Number(item.price),
+                })),
+            }) as any;
 
-            console.log('Creating PayOS payment link with data:', JSON.stringify(paymentData, null, 2));
+            const checkoutUrl = paymentLink.checkoutUrl ?? paymentLink.data?.checkoutUrl ?? null;
 
-            const paymentLink = await this.payos.paymentRequests.create(paymentData);
+            // If checkoutUrl is missing, the link already exists on PayOS — fetch it instead
+            if (!checkoutUrl) {
+                const existing = await this.payos.paymentRequests.get(order.id) as any;
+                return {
+                    ...existing,
+                    checkoutUrl: existing.checkoutUrl ?? existing.data?.checkoutUrl ?? null,
+                    orderId: order.id,
+                };
+            }
 
-            return {
-                paymentUrl: paymentLink.checkoutUrl,
-                qrCode: paymentLink.qrCode,
-                orderId: order.id,
-                amount: order.totalPrice,
-            };
+            return { ...paymentLink, checkoutUrl, orderId: order.id };
         } catch (error) {
-            console.error('PayOS error details:', error);
-            throw new BadRequestException(`Failed to create payment link: ${error.message || JSON.stringify(error)}`);
+            // Fallback: code 231 means the link already exists (some SDK versions throw instead of returning)
+            if (error?.response?.data?.code === '231' || error?.message?.includes('231')) {
+                const existing = await this.payos.paymentRequests.get(order.id) as any;
+                return {
+                    ...existing,
+                    checkoutUrl: existing.checkoutUrl ?? existing.data?.checkoutUrl ?? null,
+                    orderId: order.id,
+                };
+            }
+            throw new BadRequestException(`Failed to create payment link: ${error.message || error}`);
         }
     }
 
@@ -123,30 +105,25 @@ export class PaymentService implements IPaymentService {
             throw new BadRequestException(`Invalid webhook signature: ${error.message || error}`);
         }
 
+        // PayOS also sends webhooks for failed/cancelled payments — only process successful ones
         if (webhookBody.code !== "00") {
-            throw new BadRequestException(`Payment failed with code: ${webhookBody.code}`);
+            return { message: "Webhook received but payment was not successful" };
         }
 
         const payment = await this.prisma.payment.findFirst({
-            where: {
-                orderId: webhookData.orderCode,
-                isDeleted: false,
-            },
-            include: {
-                order: true,
-            },
+            where: { orderId: webhookData.orderCode, isDeleted: false },
+            include: { order: true },
         });
 
-        if (!payment) {
-            throw new NotFoundException("Payment not found");
-        }
+        if (!payment) throw new NotFoundException("Payment not found");
 
         if (Number(payment.amount) !== webhookData.amount) {
-            throw new BadRequestException("Payment amount mismatch");
+            throw new BadRequestException("Payment amount does not match");
         }
 
-        if (payment.status == PaymentStatus.PAID) {
-            return { message: "Payment already processed" }
+        // Idempotency check — PayOS may call the webhook more than once
+        if (payment.status === PaymentStatus.PAID) {
+            return { message: "Payment already processed" };
         }
 
         await this.prisma.$transaction(async (tx) => {
@@ -161,36 +138,22 @@ export class PaymentService implements IPaymentService {
 
             await tx.order.update({
                 where: { id: payment.orderId },
-                data: {
-                    status: OrderStatus.PROCESSED,
-                },
+                data: { status: OrderStatus.PROCESSED },
             });
         });
 
-        return {
-            message: "Payment processed successfully",
-            orderId: payment.orderId,
-        };
+        return { message: "Payment processed successfully", orderId: payment.orderId };
     }
 
     // Manual payment confirmation — used for COD or admin override
     async confirmPayment(dto: ConfirmPaymentDto) {
-        const payment = await this.prisma.payment.findUnique({
-            where: {
-                id: dto.paymentId
-            },
-            include: {
-                order: true
-            },
+        const payment = await this.prisma.payment.findFirst({
+            where: { id: dto.paymentId, isDeleted: false },
+            include: { order: true },
         });
 
-        if (!payment) {
-            throw new NotFoundException("Payment not found");
-        }
-
-        if (payment.status == PaymentStatus.PAID) {
-            throw new BadRequestException("Payment has already been confirmed");
-        }
+        if (!payment) throw new NotFoundException("Payment not found");
+        if (payment.status === PaymentStatus.PAID) throw new BadRequestException("Payment has already been confirmed");
 
         await this.prisma.$transaction(async (tx) => {
             await tx.payment.update({
@@ -202,39 +165,30 @@ export class PaymentService implements IPaymentService {
                 },
             });
 
-            if (payment.order.status == OrderStatus.PENDING) {
+            if (payment.order.status === OrderStatus.PENDING) {
                 await tx.order.update({
                     where: { id: payment.orderId },
-                    data: {
-                        status: OrderStatus.PROCESSED,
-                    },
+                    data: { status: OrderStatus.PROCESSED },
                 });
             }
         });
 
         return this.prisma.payment.findUnique({
             where: { id: payment.id },
-            include: {
-                order: true,
-            },
+            include: { order: true },
         });
     }
 
     async cancelPayment(paymentId: number) {
-        const payment = await this.prisma.payment.findUnique({
-            where: { id: paymentId },
+        const payment = await this.prisma.payment.findFirst({
+            where: { id: paymentId, isDeleted: false },
         });
 
-        if (!payment) {
-            throw new NotFoundException("Payment not found");
-        }
-
-        if (payment.status == PaymentStatus.PAID) {
-            throw new BadRequestException("Cannot cancel paid payment")
-        }
+        if (!payment) throw new NotFoundException("Payment not found");
+        if (payment.status === PaymentStatus.PAID) throw new BadRequestException("Cannot cancel a paid payment");
 
         // For BANK_TRANSFER, cancel the outstanding payment link on PayOS
-        if (payment.method === "BANK_TRANSFER") {
+        if (payment.method === PaymentMethod.BANK_TRANSFER) {
             try {
                 await this.payos.paymentRequests.cancel(payment.orderId);
             } catch {
@@ -244,56 +198,43 @@ export class PaymentService implements IPaymentService {
 
         return this.prisma.payment.update({
             where: { id: paymentId },
-            data: {
-                status: PaymentStatus.FAILED,
-            },
+            data: { status: PaymentStatus.FAILED },
         });
     }
 
     async getPaymentHistory(filter: FilterPaymentsDto) {
         const { status, fromDate, toDate, page = 1, limit = 10 } = filter;
+        const skip = (page - 1) * limit;
 
-        const where: any = {
-            isDeleted: false,
-        };
+        const where: {
+            isDeleted: boolean;
+            status?: PaymentStatus;
+            createdAt?: { gte?: Date; lte?: Date };
+        } = { isDeleted: false };
 
-        if (status) {
-            where.status = status;
-        }
-
+        if (status) where.status = status;
         if (fromDate || toDate) {
             where.createdAt = {};
-
-            if (fromDate) {
-                where.createdAt.gte = new Date(fromDate);
-            }
-
-            if (toDate) {
-                where.createdAt.lte = new Date(toDate);
-            }
+            if (fromDate) where.createdAt.gte = new Date(fromDate);
+            if (toDate) where.createdAt.lte = new Date(toDate);
         }
 
-        const total = await this.prisma.payment.count({ where });
-
-        const payments = await this.prisma.payment.findMany({
-            where,
-            skip: (page - 1) * limit,
-            take: limit,
-            orderBy: { createdAt: "desc" },
-            include: {
-                order: {
-                    include: {
-                        user: {
-                            select: {
-                                id: true,
-                                username: true,
-                                email: true,
-                            },
+        const [total, payments] = await this.prisma.$transaction([
+            this.prisma.payment.count({ where }),
+            this.prisma.payment.findMany({
+                where,
+                skip,
+                take: limit,
+                orderBy: { createdAt: "desc" },
+                include: {
+                    order: {
+                        include: {
+                            user: { select: { id: true, username: true, email: true } },
                         },
                     },
                 },
-            },
-        });
+            }),
+        ]);
 
         return {
             data: payments,
@@ -311,32 +252,56 @@ export class PaymentService implements IPaymentService {
             where: { orderId },
         });
 
-        if (!payment) {
-            throw new NotFoundException("Payment not found");
-        }
+        if (!payment) throw new NotFoundException("Payment not found");
 
-        if (payment.method == "COD") {
+        if (payment.method === PaymentMethod.COD) {
             return {
                 orderId,
                 status: payment.status,
-                message: "COD payment, manual confirmation required",
+                message: "COD payment — confirm manually after delivery",
             };
         }
 
         // Fetch live payment status from PayOS to compare with local DB
         try {
-            const payosInfo = await this.payos.paymentRequests.get(orderId);
+            const payosInfo = await this.payos.paymentRequests.get(orderId) as any;
+
+            // Auto-sync: if PayOS is PAID but local is still PENDING (webhook not yet received)
+            if (payosInfo.status === 'PAID' && payment.status === PaymentStatus.PENDING) {
+                const latestTransaction = payosInfo.transactions?.[payosInfo.transactions.length - 1];
+
+                await this.prisma.$transaction(async (tx) => {
+                    await tx.payment.update({
+                        where: { id: payment.id },
+                        data: {
+                            status: PaymentStatus.PAID,
+                            transactionId: latestTransaction?.reference ?? null,
+                            paidAt: latestTransaction?.transactionDateTime
+                                ? new Date(latestTransaction.transactionDateTime)
+                                : new Date(),
+                        },
+                    });
+
+                    await tx.order.update({
+                        where: { id: orderId },
+                        data: { status: OrderStatus.PROCESSED },
+                    });
+                });
+            }
 
             return {
                 orderId,
-                localStatus: payment.status,
+                localStatus: payosInfo.status === 'PAID' && payment.status === PaymentStatus.PENDING
+                    ? PaymentStatus.PAID  // return the synced status
+                    : payment.status,
                 payosStatus: payosInfo.status,
                 amount: payosInfo.amount,
                 amountPaid: payosInfo.amountPaid,
                 transactions: payosInfo.transactions,
+                synced: payosInfo.status === 'PAID' && payment.status === PaymentStatus.PENDING,
             };
         } catch (error) {
-            throw new BadRequestException(`Failed to check payment status: ${error.message}`);
+            throw new BadRequestException(`Failed to fetch PayOS status: ${error.message}`);
         }
     }
 }
