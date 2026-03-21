@@ -122,7 +122,12 @@ describe('ProductService', () => {
       const product = {
         id: 1,
         name: 'Product A',
+        description: 'test',
+        price: new Decimal(100),
+        categoryId: 1,
+        isActive: true,
         isDeleted: false,
+        createdAt: new Date(),
       };
 
       mockPrismaService.product.findFirst.mockResolvedValue(product);
@@ -147,9 +152,15 @@ describe('ProductService', () => {
     it('should toggle product active status', async () => {
       const product = {
         id: 1,
+        name: 'Product A',
+        description: 'test',
+        price: new Decimal(100),
+        categoryId: 1,
         isActive: true,
         isDeleted: false,
+        createdAt: new Date(),
       };
+  
 
       const updatedProduct = {
         ...product,
