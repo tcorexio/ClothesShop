@@ -1,9 +1,11 @@
 import {
   Body,
+  BadRequestException,
   Controller,
   Get,
   Inject,
   Post,
+  Query,
   Req,
   Res,
   UnauthorizedException,
@@ -30,6 +32,22 @@ export class AuthController {
     @Inject(USER_SERVICE)
     private readonly userService: IUserService,
   ) {}
+
+  @Public()
+  @Get('google')
+  getGoogleAuthUrl() {
+    return this.authService.getGoogleAuthUrl();
+  }
+
+  @Public()
+  @Get('google/callback')
+  loginWithGoogle(@Query('code') code?: string) {
+    if (!code) {
+      throw new BadRequestException('Missing code');
+    }
+
+    return this.authService.loginWithGoogleCode(code);
+  }
 
   @Public()
   @Post('signup')

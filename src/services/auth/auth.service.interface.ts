@@ -3,6 +3,8 @@ import { LoginDto } from '@dto/auth/login.dto';
 import { ResetPasswordDto } from '@dto/auth/reset-password.dto';
 import { SignUpDto } from '@dto/auth/signup.dto';
 import {
+  GoogleAuthUrlModel,
+  GoogleCallbackModel,
   LoginModel,
   SignUpModel,
   ForgotPasswordModel,
@@ -11,6 +13,8 @@ import {
 } from '@models/auth/auth.model';
 
 export interface IAuthService {
+  getGoogleAuthUrl(): GoogleAuthUrlModel;
+  loginWithGoogleCode(code: string): Promise<GoogleCallbackModel>;
   login(dto: LoginDto): Promise<LoginModel>;
   signup(dto: SignUpDto): Promise<SignUpModel>;
   forgotPassword(dto: ForgotPasswordDto): Promise<ForgotPasswordModel>;

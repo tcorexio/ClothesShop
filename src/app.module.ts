@@ -5,7 +5,7 @@ import { JwtModule } from '@nestjs/jwt';
 import { RefreshTokenModule } from './modules/refresh-token/refresh-token.module';
 import { UserModule } from './modules/user/user.module';
 import { AddressModule } from './modules/address/address.module';
-import { ConfigModule, ConfigService } from '@nestjs/config';
+import { ConfigModule } from '@nestjs/config';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { APP_GUARD } from '@nestjs/core';
 import { S3Module } from './modules/s3/s3.module';
@@ -20,6 +20,7 @@ import { AuthModule } from '@modules/auth/auth.module';
 import { MailModule } from '@modules/mail/mail.module';
 import { OrderModule } from '@modules/order/order.module';
 import { PaymentModule } from '@modules/payment/payment.module';
+import { AppCacheModule } from '@modules/cache/cache.module';
 
 
 @Module({
@@ -45,6 +46,7 @@ import { PaymentModule } from '@modules/payment/payment.module';
     ConfigModule.forRoot({
       isGlobal: true,
     }),
+    AppCacheModule,
   ],
   controllers: [AppController],
   providers: [
