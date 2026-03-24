@@ -9,6 +9,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   constructor(configService: ConfigService) {
     super({
       jwtFromRequest: ExtractJwt.fromExtractors([
+        ExtractJwt.fromAuthHeaderAsBearerToken(),
         (req) => {
           return req?.cookies?.accessToken;
         },
@@ -21,6 +22,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     return {
       id: payload.sub,
       role: payload.role,
+      scope: payload.scope,
     };
   }
 }
