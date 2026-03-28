@@ -35,3 +35,13 @@ export interface RefreshTokenModel {
   accessToken: string;
   refreshToken: string;
 }
+
+export interface GoogleAuthUrlModel {
+  url: string;
+}
+
+export interface GoogleCallbackModel {
+  accessToken: string;
+  refreshToken: string;
+  user: UserModel;
+}

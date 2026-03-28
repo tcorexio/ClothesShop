@@ -10,12 +10,14 @@ import {
     ParseIntPipe,
 } from "@nestjs/common";
 import { Public } from "@common/decorators/public.decorator";
+import { Roles } from "@common/decorators/roles.decorator";
 import { PaymentService } from "@services/payment/payment.service";
 import type { IPaymentService } from "@services/payment/payment.service.interface";
 import { CreatePaymentLinkDto } from "@dto/payment/create-payment-link.dto";
 import { ConfirmPaymentDto } from "@dto/payment/confirm-payment.dto";
 import { PayOSWebhookDto } from "@dto/payment/payos-webhook.dto";
 import { FilterPaymentsDto } from "@dto/payment/filter-payments.dto";
+import { ROLE } from "generated/prisma/enums";
 
 @Controller("payments")
 export class PaymentController {
@@ -41,16 +43,22 @@ export class PaymentController {
         return this.paymentService.handlePayOSWebhook(dto);
     }
 
+    // Only admins can manually confirm a payment (e.g., COD or override)
+    @Roles(ROLE.ADMIN)
     @Patch("confirm")
     confirmPayment(@Body() dto: ConfirmPaymentDto) {
         return this.paymentService.confirmPayment(dto);
     }
 
+    // Only admins can cancel a payment on behalf of the system
+    @Roles(ROLE.ADMIN)
     @Patch(":id/cancel")
     cancelPayment(@Param("id", ParseIntPipe) id: number) {
         return this.paymentService.cancelPayment(id);
     }
 
+    // Full payment history is visible to admins only
+    @Roles(ROLE.ADMIN)
     @Get("history")
     getPaymentHistory(@Query() filter: FilterPaymentsDto) {
         return this.paymentService.getPaymentHistory(filter);

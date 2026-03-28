@@ -7,16 +7,42 @@ import { PrismaService } from "@services/prisma/prisma.service";
 import type { ICategoryService } from "@services/category/category.service.interface";
 import { toProductResponse } from "src/mapper/product.mapper";
 import { CATEGORY_SERVICE } from "@common/constant/service.interface.constant";
-import { Inject } from "@nestjs/common";
+import { BadRequestException, Inject, Logger } from "@nestjs/common";
 import { PageFilterDto } from "@dto/page/page-filter.dto";
 import { ProductFilterRequest } from "@dto/product/product-filter.request";
+import { CACHE_MANAGER } from "@nestjs/cache-manager";
+import type { Cache } from "cache-manager";
+import { BadRequestError } from "@payos/node";
 
 export class ProductService implements IProductService {
+    private readonly logger = new Logger(ProductService.name);
+    private readonly getAllCacheKeysIndex = 'products:getall:keys';
+
     constructor(
         private readonly prismaService: PrismaService,
         @Inject(CATEGORY_SERVICE)
         private readonly categoryService: ICategoryService,
+        @Inject(CACHE_MANAGER)
+        private readonly cacheManager: Cache,
     ) {}
+
+    private async registerGetAllCacheKey(cacheKey: string): Promise<void> {
+        const keys = (await this.cacheManager.get<string[]>(this.getAllCacheKeysIndex)) ?? [];
+
+        if (!keys.includes(cacheKey)) {
+            await this.cacheManager.set(this.getAllCacheKeysIndex, [...keys, cacheKey]);
+        }
+    }
+
+    private async clearGetAllCache(): Promise<void> {
+        const keys = (await this.cacheManager.get<string[]>(this.getAllCacheKeysIndex)) ?? [];
+
+        if (keys.length > 0) {
+            await Promise.all(keys.map((key) => this.cacheManager.del(key)));
+        }
+
+        await this.cacheManager.del(this.getAllCacheKeysIndex);
+    }
 
     async Add(data: CreateProductRequest): Promise<ProductResponse> {
         const category = await this.categoryService.GetById(data.categoryId);
@@ -26,7 +52,7 @@ export class ProductService implements IProductService {
         });
 
         if (existingProduct) {
-            throw new Error('Product with this name already exists');
+            throw new BadRequestException('Product with this name already exists');
         }
 
         const product = await this.prismaService.product.create({
@@ -47,13 +73,15 @@ export class ProductService implements IProductService {
         });
 
         if (existingProduct && existingProduct.id !== id) {
-            throw new Error('Product with this name already exists');
+            throw new BadRequestException('Product with this name already exists');
         }
 
         const product = await this.prismaService.product.update({
             where: { id },
             data,
         });
+
+        await this.clearGetAllCache();
 
         return toProductResponse(product);
     }
@@ -68,7 +96,6 @@ export class ProductService implements IProductService {
     }
 
     async Restore(id: number): Promise<ProductResponse> {
-        await this.GetById(id);
         const product = await this.prismaService.product.update({
             where: { id },
             data: { isDeleted: false },
@@ -77,8 +104,48 @@ export class ProductService implements IProductService {
     }
 
     async GetAll(data: PageFilterDto): Promise<PageResponseModel<ProductResponse>> {
+        const startedAt = Date.now();
         data.normalize();
 
+        const cacheKey = `products:getall:${data.page}:${data.limit}`;
+        const cached = await this.cacheManager.get<PageResponseModel<ProductResponse>>(cacheKey);
+
+        if (cached) {
+            const duration = Date.now() - startedAt;
+            this.logger.log(`[CACHE HIT] ${cacheKey} - ${duration}ms`);
+            return cached;
+        }
+
+        const skip = (data.page - 1) * data.limit;
+
+        const totalItems = await this.Count();
+
+        const products = await this.prismaService.product.findMany({
+            where: { isDeleted: false },
+            skip,
+            take: data.limit,
+        });
+
+        const totalPages = Math.ceil(totalItems / data.limit);
+
+        const result = {
+            content: products.map(toProductResponse),
+            totalItems,
+            totalPages,
+            pageNumber: data.page,
+            pageSize: data.limit,
+        };
+
+        await this.cacheManager.set(cacheKey, result);
+        await this.registerGetAllCacheKey(cacheKey);
+        const duration = Date.now() - startedAt;
+        this.logger.log(`[CACHE MISS] ${cacheKey} - ${duration}ms`);
+
+        return result;
+    }
+
+    async GetAll1(data: PageFilterDto): Promise<PageResponseModel<ProductResponse>> {
+        data.normalize();
         const skip = (data.page - 1) * data.limit;
 
         const totalItems = await this.Count();
@@ -106,7 +173,7 @@ export class ProductService implements IProductService {
         });
 
         if (!product) {
-            throw new Error('Product not found');
+            throw new BadRequestException('Product not found');
         }
 
         return toProductResponse(product);
@@ -118,7 +185,7 @@ export class ProductService implements IProductService {
         });
 
         if (!product) {
-            throw new Error('Product not found');
+            throw new BadRequestException('Product not found');
         }
 
         return toProductResponse(product);
@@ -239,7 +306,7 @@ export class ProductService implements IProductService {
         });
 
         if (!product) {
-            throw new Error('Product not found');
+            throw new BadRequestException('Product not found');
         }
 
         const updatedProduct = await this.prismaService.product.update({

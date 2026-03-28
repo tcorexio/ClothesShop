@@ -5,8 +5,10 @@ import {
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
+import { randomBytes } from 'crypto';
 
 import { IAuthService } from './auth.service.interface';
 
@@ -16,6 +18,8 @@ import { ResetPasswordDto } from '@dto/auth/reset-password.dto';
 import { SignUpDto } from '@dto/auth/signup.dto';
 
 import {
+  GoogleAuthUrlModel,
+  GoogleCallbackModel,
   LoginModel,
   SignUpModel,
   ForgotPasswordModel,
@@ -35,6 +39,7 @@ export class AuthService implements IAuthService {
   constructor(
     private readonly prismaService: PrismaService,
     private readonly jwtService: JwtService,
+    private readonly configService: ConfigService,
     private readonly mailService: MailService,
     @Inject(REFRESHTOKEN_SERVICE)
     private readonly refreshTokenService: IRefreshTokenService,
@@ -50,6 +55,151 @@ export class AuthService implements IAuthService {
       avatar: user.avatar,
       phone: user.phone,
       role: user.role,
+    };
+  }
+
+  private async buildUniqueGoogleUsername(email: string): Promise<string> {
+    const localPart = email.split('@')[0] || 'google_user';
+    const sanitized = localPart.replace(/[^a-zA-Z0-9_.]/g, '').slice(0, 20);
+    const base = sanitized || 'google_user';
+
+    let username = base;
+    let attempts = 0;
+
+    while (attempts < 10) {
+      const existed = await this.prismaService.user.findUnique({
+        where: { username },
+      });
+
+      if (!existed) {
+        return username;
+      }
+
+      username = `${base}_${Math.floor(Math.random() * 100000)}`;
+      attempts += 1;
+    }
+
+    return `${base}_${Date.now()}`;
+  }
+
+  getGoogleAuthUrl(): GoogleAuthUrlModel {
+    const clientId = this.configService.getOrThrow<string>('GOOGLE_CLIENT_ID');
+    const redirectUri = this.configService.getOrThrow<string>(
+      'GOOGLE_REDIRECT_URI',
+    );
+
+    const params = new URLSearchParams({
+      client_id: clientId,
+      redirect_uri: redirectUri,
+      response_type: 'code',
+      scope: 'openid email profile',
+      access_type: 'offline',
+      prompt: 'consent',
+    });
+
+    return {
+      url: `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`,
+    };
+  }
+
+  async loginWithGoogleCode(code: string): Promise<GoogleCallbackModel> {
+    const clientId = this.configService.getOrThrow<string>('GOOGLE_CLIENT_ID');
+    const clientSecret = this.configService.getOrThrow<string>(
+      'GOOGLE_CLIENT_SECRET',
+    );
+    const redirectUri = this.configService.getOrThrow<string>(
+      'GOOGLE_REDIRECT_URI',
+    );
+
+    const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: new URLSearchParams({
+        code,
+        client_id: clientId,
+        client_secret: clientSecret,
+        redirect_uri: redirectUri,
+        grant_type: 'authorization_code',
+      }),
+    });
+
+    if (!tokenResponse.ok) {
+      throw new BadRequestException('Failed to exchange Google authorization code');
+    }
+
+    const tokenData = (await tokenResponse.json()) as {
+      access_token?: string;
+    };
+
+    if (!tokenData.access_token) {
+      throw new BadRequestException('Google access token not found');
+    }
+
+    const userInfoResponse = await fetch(
+      'https://www.googleapis.com/oauth2/v3/userinfo',
+      {
+        headers: {
+          Authorization: `Bearer ${tokenData.access_token}`,
+        },
+      },
+    );
+
+    if (!userInfoResponse.ok) {
+      throw new BadRequestException('Failed to fetch Google user profile');
+    }
+
+    const googleUser = (await userInfoResponse.json()) as {
+      email?: string;
+      name?: string;
+      picture?: string;
+    };
+
+    if (!googleUser.email) {
+      throw new BadRequestException('Google account does not provide email');
+    }
+
+    let user = await this.prismaService.user.findUnique({
+      where: { email: googleUser.email },
+    });
+
+    if (!user) {
+      const username = await this.buildUniqueGoogleUsername(googleUser.email);
+      const randomPassword = randomBytes(32).toString('hex');
+      const hashedPassword = await bcrypt.hash(randomPassword, 10);
+
+      user = await this.prismaService.user.create({
+        data: {
+          username,
+          email: googleUser.email,
+          password: hashedPassword,
+          name: googleUser.name,
+          avatar: googleUser.picture,
+          role: ROLE.CUSTOMER,
+        },
+      });
+    }
+
+    if (user.isDeleted) {
+      throw new ForbiddenException('Tài khoản đã bị vô hiệu hoá');
+    }
+
+    const payload = { sub: user.id, role: user.role };
+
+    const accessToken = this.jwtService.sign(payload, { expiresIn: '15m' });
+    const refreshToken = this.jwtService.sign(payload, { expiresIn: '7d' });
+
+    await this.refreshTokenService.save(
+      refreshToken,
+      user.id,
+      new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+    );
+
+    return {
+      accessToken,
+      refreshToken,
+      user: this.toUserModel(user),
     };
   }
 
@@ -215,4 +365,5 @@ export class AuthService implements IAuthService {
       message: 'Đổi mật khẩu thành công',
     };
   }
+
 }

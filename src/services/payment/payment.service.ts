@@ -206,7 +206,12 @@ export class PaymentService implements IPaymentService {
         const { status, fromDate, toDate, page = 1, limit = 10 } = filter;
         const skip = (page - 1) * limit;
 
-        const where: any = { isDeleted: false };
+        const where: {
+            isDeleted: boolean;
+            status?: PaymentStatus;
+            createdAt?: { gte?: Date; lte?: Date };
+        } = { isDeleted: false };
+
         if (status) where.status = status;
         if (fromDate || toDate) {
             where.createdAt = {};
