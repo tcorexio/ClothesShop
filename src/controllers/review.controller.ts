@@ -56,15 +56,6 @@ export class ReviewController {
     }
 
 
-    @Get(':id')
-    async getById(@Param('id') id: number) {
-        const review = await this.reviewService.GetById(id);
-        return {
-            message: 'Review retrieved successfully',
-            data: review,
-        }; 
-    }
-
     @Get('product/:productId')
     @Public()
     async getReviewsByProduct(
@@ -93,8 +84,8 @@ export class ReviewController {
 
     @Get('has-reviewed')
     async hasReviewed(
-        @Query('userId') userId: number,
-        @Query('productId') productId: number
+        @Query('userId', ParseIntPipe) userId: number,
+        @Query('productId', ParseIntPipe) productId: number
     ) {
         const result = await this.reviewService.HasReviewed(userId, productId);
 
@@ -102,6 +93,15 @@ export class ReviewController {
             message: 'Checked successfully',
             data: result,
         };
+    }
+
+    @Get(':id')
+    async getById(@Param('id', ParseIntPipe) id: number) {
+        const review = await this.reviewService.GetById(id);
+        return {
+            message: 'Review retrieved successfully',
+            data: review,
+        }; 
     }
 
     @Get('product/:productId/rating-summary')

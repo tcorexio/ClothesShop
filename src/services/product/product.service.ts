@@ -7,11 +7,12 @@ import { PrismaService } from "@services/prisma/prisma.service";
 import type { ICategoryService } from "@services/category/category.service.interface";
 import { toProductResponse } from "src/mapper/product.mapper";
 import { CATEGORY_SERVICE } from "@common/constant/service.interface.constant";
-import { Inject, Logger } from "@nestjs/common";
+import { BadRequestException, Inject, Logger } from "@nestjs/common";
 import { PageFilterDto } from "@dto/page/page-filter.dto";
 import { ProductFilterRequest } from "@dto/product/product-filter.request";
 import { CACHE_MANAGER } from "@nestjs/cache-manager";
 import type { Cache } from "cache-manager";
+import { BadRequestError } from "@payos/node";
 
 export class ProductService implements IProductService {
     private readonly logger = new Logger(ProductService.name);
@@ -51,7 +52,7 @@ export class ProductService implements IProductService {
         });
 
         if (existingProduct) {
-            throw new Error('Product with this name already exists');
+            throw new BadRequestException('Product with this name already exists');
         }
 
         const product = await this.prismaService.product.create({
@@ -72,7 +73,7 @@ export class ProductService implements IProductService {
         });
 
         if (existingProduct && existingProduct.id !== id) {
-            throw new Error('Product with this name already exists');
+            throw new BadRequestException('Product with this name already exists');
         }
 
         const product = await this.prismaService.product.update({
@@ -95,7 +96,6 @@ export class ProductService implements IProductService {
     }
 
     async Restore(id: number): Promise<ProductResponse> {
-        await this.GetById(id);
         const product = await this.prismaService.product.update({
             where: { id },
             data: { isDeleted: false },
@@ -173,7 +173,7 @@ export class ProductService implements IProductService {
         });
 
         if (!product) {
-            throw new Error('Product not found');
+            throw new BadRequestException('Product not found');
         }
 
         return toProductResponse(product);
@@ -185,7 +185,7 @@ export class ProductService implements IProductService {
         });
 
         if (!product) {
-            throw new Error('Product not found');
+            throw new BadRequestException('Product not found');
         }
 
         return toProductResponse(product);
@@ -306,7 +306,7 @@ export class ProductService implements IProductService {
         });
 
         if (!product) {
-            throw new Error('Product not found');
+            throw new BadRequestException('Product not found');
         }
 
         const updatedProduct = await this.prismaService.product.update({

@@ -4,7 +4,7 @@ import { Roles } from "@common/decorators/roles.decorator";
 import { PageFilterDto } from "@dto/page/page-filter.dto";
 import { CreateProductVariantRequest } from "@dto/product-variant/create-product-variant.request";
 import { UpdateProductVariantRequest } from "@dto/product-variant/update-product-variant.request";
-import { Body, Controller, Delete, Get, Inject, Param, Patch, Post, Query, UploadedFile, UseInterceptors } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Inject, Param, ParseIntPipe, Patch, Post, Query, UploadedFile, UseInterceptors } from "@nestjs/common";
 import { FileInterceptor } from "@nestjs/platform-express";
 import type { IProductVariantService } from "@services/product-variant/product-variant.service.interface";
 import { S3Service } from "@services/s3/s3.service";
@@ -66,9 +66,24 @@ export class ProductVariantController {
         };
     }
 
+    @Get('attribute')
+    @Get('attributes')
+    @Public()
+    async getByAttributes(
+        @Query('productId', ParseIntPipe) productId: number,
+        @Query('size') size: string, 
+        @Query('color') color: string
+    ) {
+        const productVariant = await this.productVariantService.GetByAttributes(productId, size, color);
+        return {
+            message: 'Product variant retrieved successfully',
+            data: productVariant,
+        };
+    }
+
     @Get(':id')
     @Public()
-    async getById(@Param('id') id: number) {
+    async getById(@Param('id', ParseIntPipe) id: number) {
         const productVariant = await this.productVariantService.GetById(id);
         return {
             message: 'Product variant retrieved successfully',
@@ -89,19 +104,6 @@ export class ProductVariantController {
         };
     }
 
-    @Get('attributes')
-    @Public()
-    async getByAttributes(
-        @Query('productId') productId: number, 
-        @Query('size') size: string, 
-        @Query('color') color: string
-    ) {
-        const productVariant = await this.productVariantService.GetByAttributes(productId, size, color);
-        return {
-            message: 'Product variant retrieved successfully',
-            data: productVariant,
-        };
-    }
 
     @Post(':id/increase-stock')
     @Roles(ROLE.ADMIN)

@@ -40,16 +40,6 @@ export class AuthController {
   }
 
   @Public()
-  @Get('google/callback')
-  loginWithGoogle(@Query('code') code?: string) {
-    if (!code) {
-      throw new BadRequestException('Missing code');
-    }
-
-    return this.authService.loginWithGoogleCode(code);
-  }
-
-  @Public()
   @Post('signup')
   signup(@Body() dto: SignUpDto) {
     return this.authService.signup(dto);
