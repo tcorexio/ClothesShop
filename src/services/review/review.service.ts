@@ -11,6 +11,7 @@ import type { IUserService } from "@services/user/user.service.interface";
 import { ProductRatingSummaryResponse } from "@dto/review/productRatingSummary.response";
 import { CreateReviewRequest } from "@dto/review/create-review.request";
 import { UpdateReviewRequest } from "@dto/review/update-review.request";
+import { log } from "console";
 
 export class ReviewService implements IReviewService{
     constructor(
