@@ -25,6 +25,7 @@ import { ProductService } from './product.service';
 import { PrismaService } from '@services/prisma/prisma.service';
 import { CATEGORY_SERVICE } from '@common/constant/service.interface.constant';
 import { Decimal } from '@prisma/client/runtime/index-browser';
+import { CACHE_MANAGER } from '@nestjs/cache-manager';
 
 describe('ProductService', () => {
   let service: ProductService;
@@ -58,6 +59,14 @@ describe('ProductService', () => {
         {
           provide: CATEGORY_SERVICE,
           useValue: mockCategoryService,
+        },
+        {
+          provide: CACHE_MANAGER,
+          useValue: {
+            get: jest.fn(),
+            set: jest.fn(),
+            del: jest.fn(),
+          },
         },
       ],
     }).compile();
@@ -160,7 +169,6 @@ describe('ProductService', () => {
         isDeleted: false,
         createdAt: new Date(),
       };
-  
 
       const updatedProduct = {
         ...product,

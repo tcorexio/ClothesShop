@@ -21,8 +21,7 @@ export class ProductService implements IProductService {
     private readonly prismaService: PrismaService,
     @Inject(CATEGORY_SERVICE)
     private readonly categoryService: ICategoryService,
-    @Inject(CACHE_MANAGER)
-    private readonly cacheManager: Cache,
+    @Inject(CACHE_MANAGER) private cacheManager: Cache,
   ) {}
 
   private async registerGetAllCacheKey(cacheKey: string): Promise<void> {

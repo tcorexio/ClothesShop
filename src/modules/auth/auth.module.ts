@@ -5,10 +5,35 @@ import { PrismaModule } from '@modules/prisma/prisma.module';
 import { RefreshTokenModule } from '@modules/refresh-token/refresh-token.module';
 import { UserModule } from '@modules/user/user.module';
 import { Module } from '@nestjs/common';
+import { ConfigModule, ConfigService } from '@nestjs/config';
 import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 import { AuthService } from '@services/auth/auth.service';
 import { JwtStrategy } from 'src/strategies/jwt.strategy';
+
+// @Module({
+//   imports: [
+//     PrismaModule,
+//     MailModule,
+//     UserModule,
+//     RefreshTokenModule,
+//     PassportModule,
+//     JwtModule.register({
+//       secret: process.env.JWT_SECRET,
+//       signOptions: { expiresIn: '15m' },
+//     }),
+//   ],
+//   providers: [
+//     {
+//       provide: AUTH_SERVICE,
+//       useClass: AuthService,
+//     },
+//     JwtStrategy,
+//   ],
+//   controllers: [AuthController],
+//   exports: [AUTH_SERVICE],
+// })
+// export class AuthModule {}
 
 @Module({
   imports: [
@@ -17,9 +42,14 @@ import { JwtStrategy } from 'src/strategies/jwt.strategy';
     UserModule,
     RefreshTokenModule,
     PassportModule,
-    JwtModule.register({
-      secret: process.env.JWT_SECRET,
-      signOptions: { expiresIn: '15m' },
+    ConfigModule,
+    JwtModule.registerAsync({
+      imports: [ConfigModule],
+      useFactory: (configService: ConfigService) => ({
+        secret: configService.get<string>('JWT_SECRET'),
+        signOptions: { expiresIn: configService.get('JWT_EXPIRY', '15m') },
+      }),
+      inject: [ConfigService],
     }),
   ],
   providers: [
@@ -30,6 +60,6 @@ import { JwtStrategy } from 'src/strategies/jwt.strategy';
     JwtStrategy,
   ],
   controllers: [AuthController],
-  exports: [AUTH_SERVICE],
+  exports: [AUTH_SERVICE, JwtModule],
 })
 export class AuthModule {}
