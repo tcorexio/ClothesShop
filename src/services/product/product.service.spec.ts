@@ -16,9 +16,9 @@ jest.mock('@services/prisma/prisma.service', () => {
   };
 });
 
-const mockCategoryService = {
-  GetById: jest.fn(),
-};
+// const mockCategoryService = {
+//   GetById: jest.fn(),
+// };
 
 import { Test, TestingModule } from '@nestjs/testing';
 import { ProductService } from './product.service';
