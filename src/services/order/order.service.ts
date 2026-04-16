@@ -154,7 +154,7 @@ export class OrderService implements IOrderService {
           },
         },
       });
-    } catch (error) {
+    } catch (error: any) {
       console.error('Create order error:', error);
       throw new BadRequestException(
         `Failed to create order: ${error.message || error}`,

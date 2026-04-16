@@ -11,6 +11,7 @@ import { PageFilterDto } from "@dto/page/page-filter.dto";
 import type { IProductService } from "@services/product/product.service.interface";
 import { S3Service } from "@services/s3/s3.service";
 import e from "express";
+import { Prisma } from "generated/prisma/client";
 
 export class ProductVariantService implements IProductVariantService {
     constructor(
@@ -53,8 +54,10 @@ export class ProductVariantService implements IProductVariantService {
                 })
             }
 
-            if (error.code === 'P2002') {
-                throw new BadRequestException('A product variant with the same size and color already exists for this product');
+            if (error instanceof Prisma.PrismaClientKnownRequestError) {
+                if (error.code === 'P2002') {
+                    throw new BadRequestException('A product variant with the same size and color already exists');
+                }
             }
             
             throw error;
@@ -88,8 +91,10 @@ export class ProductVariantService implements IProductVariantService {
             if (newImageUrl) {
                 await this.s3Service.deleteFile(newImageUrl);
             }
-            if (error.code === 'P2002') {
-                throw new BadRequestException('A product variant with the same size and color already exists for this product');
+            if (error instanceof Prisma.PrismaClientKnownRequestError) {
+                if (error.code === 'P2002') {
+                    throw new BadRequestException('A product variant with the same size and color already exists for this product');
+                }
             }
             throw error;
         }
